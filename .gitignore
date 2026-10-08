@@ -1,0 +1,12 @@
+_reference/
+.venv/
+data/
+__pycache__/
+*.pyc
+*.spec
+build/
+dist/
+*.zip
+*.log
+.idea/
+.vscode/

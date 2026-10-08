@@ -1,0 +1,5 @@
+# run.bat 必须保持 CRLF 原始字节：cmd.exe 对换行/编码很敏感，
+# 一旦被 git 转换过就会出现 "'01' 不是内部或外部命令" 这类问题。
+run.bat -text
+
+* text=auto

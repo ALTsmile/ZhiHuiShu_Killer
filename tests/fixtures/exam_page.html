@@ -1,0 +1,242 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>第四章单元测试</title>
+</head>
+<body>
+<!--
+  章节测验「整页试卷」的离线样本。
+  结构按真实页面（用户提供的 HTML）1:1 复刻：
+    .myschool_ewcon > .examPaper_box > .examPaper_subject
+  并补了一个最小脚本模拟站点行为：
+    · 点 .nodeLab 会切换隐藏 input 的 checked（radio 单选 / checkbox 多选）
+    · 点「下一题」会隐藏当前题、显示下一题
+  这样离线测试就能覆盖「翻页 + 作答 + 提交」的完整流程。
+-->
+<div class="myschool_ewcon">
+  <div class="titOperateWrap">
+    <h1 class="fl titleLength">第四章单元测试</h1>
+    <div class="operateBtn_box fr mr5">
+      <button type="button" class="el-button btnStyleXSumit" onclick="window.__submit()">
+        <span>提交作业</span>
+      </button>
+      <button type="button" class="el-button btnStyleX" onclick="window.__draft = true;">
+        <span>暂存作业</span>
+      </button>
+    </div>
+  </div>
+  <div class="examPaper_box">
+    <div class="examInfo">
+      <ul>
+        <li><label>题目数</label><span>3</span></li>
+        <li><label>总分数</label><span class="hwork_bcon">6</span></li>
+      </ul>
+    </div>
+    <div class="examPaper_subject mt20" id="q0">
+      <input type="hidden" value="[]">
+      <div class="subject_stem clearfix">
+        <div class="subject_type_describe fl">
+          <div class="subject_num fl"><span>1.</span></div>
+          <div class="subject_type_annex">
+            <span class="subject_type"><span>【单选题】</span> <span>(2分)</span></span>
+          </div>
+          <div class="subject_describe">组合逻辑电路的输出取决于什么？</div>
+        </div>
+      </div>
+      <div class="subject_node">
+        <div class="nodeLab" onclick="window.__pick(0,0,this)">
+          <div class="label clearfix">
+            <div class="fl"><input type="radio" value="1" style="display:none">
+              <img class="flagChecked" src="a.png"></div>
+            <span class="ABCase">A.</span>
+            <div class="node_detail examquestions-answer"><p>仅与当前输入有关</p></div>
+          </div>
+        </div>
+        <div class="nodeLab" onclick="window.__pick(0,1,this)">
+          <div class="label clearfix">
+            <div class="fl"><input type="radio" value="2" style="display:none">
+              <img class="flagChecked" src="a.png"></div>
+            <span class="ABCase">B.</span>
+            <div class="node_detail examquestions-answer"><p>与电路原有状态有关</p></div>
+          </div>
+        </div>
+        <div class="nodeLab" onclick="window.__pick(0,2,this)">
+          <div class="label clearfix">
+            <div class="fl"><input type="radio" value="3" style="display:none">
+              <img class="flagChecked" src="a.png"></div>
+            <span class="ABCase">C.</span>
+            <div class="node_detail examquestions-answer"><p>与时钟频率有关</p></div>
+          </div>
+        </div>
+        <div class="nodeLab" onclick="window.__pick(0,3,this)">
+          <div class="label clearfix">
+            <div class="fl"><input type="radio" value="4" style="display:none">
+              <img class="flagChecked" src="a.png"></div>
+            <span class="ABCase">D.</span>
+            <div class="node_detail examquestions-answer"><p>与电源电压有关</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="examPaper_subject mt20" id="q1" style="display:none">
+      <input type="hidden" value="false">
+      <div class="subject_stem clearfix">
+        <div class="subject_type_describe fl">
+          <div class="subject_num fl"><span>2.</span></div>
+          <div class="subject_type_annex">
+            <span class="subject_type"><span>【判断题】</span> <span>(2分)</span></span>
+          </div>
+          <div class="subject_describe">时序逻辑电路的输出只与当前输入有关。</div>
+        </div>
+      </div>
+      <div class="subject_node">
+        <div class="nodeLab" onclick="window.__pick(1,0,this)">
+          <div class="label clearfix">
+            <div class="fl"><input type="radio" value="11" style="display:none">
+              <img class="flagChecked" src="a.png"></div>
+            <span class="mr10">A.</span>
+            <div class="node_detail examquestions-answer">对</div>
+          </div>
+        </div>
+        <div class="nodeLab" onclick="window.__pick(1,1,this)">
+          <div class="label clearfix">
+            <div class="fl"><input type="radio" value="12" style="display:none">
+              <img class="flagChecked" src="a.png"></div>
+            <span class="mr10">B.</span>
+            <div class="node_detail examquestions-answer">错</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="examPaper_subject mt20" id="q2" style="display:none">
+      <input type="hidden" value="false">
+      <div class="subject_stem clearfix">
+        <div class="subject_type_describe fl">
+          <div class="subject_num fl"><span>3.</span></div>
+          <div class="subject_type_annex">
+            <span class="subject_type"><span>【多选题】</span> <span>(2分)</span></span>
+          </div>
+          <div class="subject_describe">关于芯片分类，下面说法正确的有哪些？</div>
+        </div>
+      </div>
+      <div class="subject_node">
+        <div class="nodeLab" onclick="window.__pick(2,0,this)">
+          <div class="label clearfix">
+            <div class="fl"><input type="checkbox" value="21" style="display:none">
+              <img class="flagChecked" src="a.png"></div>
+            <span class="mr10">A.</span>
+            <div class="node_detail examquestions-answer"><p>可分为数字电路芯片</p></div>
+          </div>
+        </div>
+        <div class="nodeLab" onclick="window.__pick(2,1,this)">
+          <div class="label clearfix">
+            <div class="fl"><input type="checkbox" value="22" style="display:none">
+              <img class="flagChecked" src="a.png"></div>
+            <span class="mr10">B.</span>
+            <div class="node_detail examquestions-answer"><p>可分为模拟电路芯片</p></div>
+          </div>
+        </div>
+        <div class="nodeLab" onclick="window.__pick(2,2,this)">
+          <div class="label clearfix">
+            <div class="fl"><input type="checkbox" value="23" style="display:none">
+              <img class="flagChecked" src="a.png"></div>
+            <span class="mr10">C.</span>
+            <div class="node_detail examquestions-answer"><p>芯片与电路无关</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="operateBtn_box">
+      <button type="button" class="el-button" onclick="window.__prev()">上一题</button>
+      <button type="button" class="el-button el-button--primary is-plain"
+              id="nextBtn" onclick="window.__nextOrSave()">下一题</button>
+    </div>
+    <div class="answerCard">
+      <h3 class="answerCard_tit percentage_tit clearfix">
+        <span class="fl">完成率</span><em class="fr"><i>0</i>%</em>
+      </h3>
+      <div class="answerCard_list clearfix">
+        <ul class="answerCard_list1 nano1">
+          <li>1</li><li>2</li><li>3</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+window.__submitted = false;
+window.__saved = false;
+window.__draft = false;
+window.__current = 0;
+window.__answers = {};
+window.__pick = function (questionIndex, optionIndex) {
+    var q = document.getElementById('q' + questionIndex);
+    var options = q.querySelectorAll('.subject_node .nodeLab');
+    var input = options[optionIndex].querySelector('input');
+    if (input.type === 'radio') {
+        Array.prototype.forEach.call(options, function (item) {
+            item.querySelector('input').checked = false;
+        });
+        input.checked = true;
+    } else {
+        input.checked = !input.checked;
+    }
+    window.__answers[questionIndex] = Array.prototype.slice.call(options)
+        .map(function (item, i) { return item.querySelector('input').checked ? i : -1; })
+        .filter(function (i) { return i >= 0; });
+    // 同步答题卡状态（已答的题号加 green）+ 完成率
+    var cards = document.querySelectorAll('.answerCard_list li');
+    if (cards[questionIndex]) {
+        cards[questionIndex].className = 'green';
+    }
+    var answered = 0;
+    Array.prototype.forEach.call(cards, function (li) {
+        if ((li.className || '').indexOf('green') >= 0) answered += 1;
+    });
+    var rate = document.querySelector('.percentage_tit em i');
+    if (rate) rate.textContent = String(Math.round(answered / cards.length * 100));
+};
+window.__show = function (index) {
+    var questions = document.querySelectorAll('.examPaper_subject');
+    Array.prototype.forEach.call(questions, function (q, i) {
+        q.style.display = (i === index) ? '' : 'none';
+    });
+    window.__current = index;
+    // 真实站点：到最后一题时「下一题」按钮会变成「保存」
+    var btn = document.getElementById('nextBtn');
+    if (btn) {
+        btn.innerText = (index === questions.length - 1) ? '保存' : '下一题';
+    }
+};
+window.__nextOrSave = function () {
+    var total = document.querySelectorAll('.examPaper_subject').length;
+    if (window.__current < total - 1) {
+        window.__show(window.__current + 1);
+    } else {
+        // 最后一题：按钮是「保存」，点它保存全部答案，页面不关
+        window.__saved = true;
+    }
+};
+window.__next = function () {
+    var total = document.querySelectorAll('.examPaper_subject').length;
+    if (window.__current < total - 1) window.__show(window.__current + 1);
+};
+window.__prev = function () {
+    if (window.__current > 0) window.__show(window.__current - 1);
+};
+window.__submit = function () { window.__submitted = true; };
+
+// 模拟真实站点：题干被渲染进 closed shadow root，
+// 所以 outerHTML / innerText / textContent 都是空的，
+// 只能靠无障碍树（CDP Accessibility.getFullAXTree）读出来。
+['q1', 'q2'].forEach(function (id) {
+    var host = document.querySelector('#' + id + ' .subject_describe');
+    if (!host) return;
+    var text = (host.textContent || '').trim();
+    host.textContent = '';
+    host.attachShadow({mode: 'closed'}).innerHTML = '<span>' + text + '</span>';
+});
+</script>
+</body>
+</html>
