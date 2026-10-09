@@ -58,7 +58,72 @@ def _set_console_title() -> None:
         pass
 
 
+def _ensure_std_streams() -> None:
+    """pythonw.exe（无控制台）启动时 sys.stdout/stderr 是 None。
+
+    有些库（warnings、playwright 等）会往 stderr 写东西，写到 None 上会直接抛错，
+    所以这里兜底：stdout 丢进黑洞，stderr 追加到 data/logs/ui-errors.log，
+    这样即使没有控制台，出问题也能在日志里看到。
+    """
+    import os
+
+    if sys.stdout is None:
+        try:
+            sys.stdout = open(os.devnull, "w", encoding="utf-8")
+        except Exception:
+            pass
+    if sys.stderr is None:
+        stream = None
+        try:
+            from zhskiller import paths
+
+            stream = open(paths.logs_dir() / "ui-errors.log", "a", encoding="utf-8")
+        except Exception:
+            stream = None
+        if stream is None:
+            try:
+                stream = open(os.devnull, "w", encoding="utf-8")
+            except Exception:
+                stream = None
+        if stream is not None:
+            sys.stderr = stream
+
+
+def _fatal(title: str, exc: BaseException) -> None:
+    """启动/运行阶段的致命错误：写日志 + 弹窗，别让用户对着空气发呆。"""
+    import traceback
+
+    detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    try:
+        from zhskiller import paths
+
+        with open(paths.logs_dir() / "ui-errors.log", "a", encoding="utf-8") as handle:
+            handle.write(f"\n==== {title} ====\n{detail}\n")
+    except Exception:
+        pass
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(
+            title,
+            f"{exc}\n\n详细信息已写入 data/logs/ui-errors.log。",
+        )
+        root.destroy()
+    except Exception:
+        pass
+    if sys.stderr is not None:
+        try:
+            sys.stderr.write(detail)
+            sys.stderr.flush()
+        except Exception:
+            pass
+
+
 def main() -> int:
+    _ensure_std_streams()
     _set_console_title()
     problem = _check_dependencies()
     if problem:
@@ -75,10 +140,18 @@ def main() -> int:
         print(problem)
         return 2
 
-    from ui.app import App
+    try:
+        from ui.app import App
+    except Exception as exc:            # 依赖装了一半 / 文件缺失
+        _fatal("启动失败", exc)
+        return 3
 
     _enable_dpi_awareness()
-    App().mainloop()
+    try:
+        App().mainloop()
+    except Exception as exc:            # 后台线程之外的界面异常
+        _fatal("运行出错", exc)
+        return 4
     return 0
 
 

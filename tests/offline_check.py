@@ -1164,6 +1164,15 @@ def main() -> int:
             "用 CRLF 换行（裸 LF 会让 cmd 读串行，实测把 chcp 65001 断成 01）",
             b"\r\n" in bat_bytes and b"\n" not in bat_bytes.replace(b"\r\n", b""),
         )
+        bat_text = bat_bytes.decode("ascii")
+        failures += not check(
+            "用 pythonw.exe + start 启动（不留控制台窗口，关掉 cmd 不会连带关程序）",
+            "pythonw.exe" in bat_text and 'start "" ' in bat_text,
+        )
+        failures += not check(
+            "启动成功后批处理立刻退出",
+            ":launch" in bat_text and bat_text.rstrip().endswith("exit /b 0"),
+        )
 
         print("27. 仅答题模式：让视频保持暂停的看门狗（回归：视频偷播→弹随堂练习→卡死）")
         page.set_content('<video id="v"></video>')
