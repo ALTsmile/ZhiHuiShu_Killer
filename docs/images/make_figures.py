@@ -33,22 +33,23 @@ FIGURES = [
             "③ 浏览器：默认新开一个（登录状态会记住），也可以接管你自己已经打开的浏览器窗口",
             "④ 控制区：开始学习 / 停止 / 暂停（暂停只是停下来，页面保持不动）；下面是实时运行日志",
         ],
-        "badges": [("1", 0.945, 0.163), ("2", 0.945, 0.324),
-                   ("3", 0.945, 0.415), ("4", 0.280, 0.648)],
+        "badges": [("1", 0.945, 0.163), ("2", 0.945, 0.337),
+                   ("3", 0.945, 0.490), ("4", 0.350, 0.729)],
     },
     {
         "key": "ui-2",
         "title": "图 2 · 播放与答题：倍速/静音、保活、两类答题、人机验证",
         "bullets": [
             "① 播放参数：默认 1.5 倍速 + 浏览器层面静音（不动播放器音量，避免被平台判定静音而不计进度）",
-            "② 保活：「停滞判定」秒数内没有进度就自动排查验证码/弹题/错误弹窗；「模拟真人鼠标操作」用于触发学习时长上报",
+            "② 时长控制：「单个视频最长」= 一个视频看多久；「每门课最长」= 每个课程网址本次最多学多久；"
+            "「每门课刷够」= 至少学够多久（不够会重看已完成的视频，用来凑平台的「规律学习」）",
             "③ 随堂练习：每个视频都会弹、不计分但必须答完；作答方式可选 AI 识别 / 随机选择 / 手动作答",
             "④ 章节测验：默认完全不碰（不勾选就不作答、也不打扰）；勾「自动完成」才作答，还可选自动提交、复查答题结果",
             "⑤ 人机验证：自动过滑块并实时对准缺口；处理不了时弹窗喊你手动完成",
         ],
-        "badges": [("1", 0.305, 0.156), ("2", 0.945, 0.214),
-                   ("3", 0.545, 0.296), ("4", 0.545, 0.352),
-                   ("5", 0.935, 0.290)],
+        "badges": [("1", 0.275, 0.163), ("2", 0.920, 0.275),
+                   ("3", 0.570, 0.419), ("4", 0.570, 0.506),
+                   ("5", 0.945, 0.419)],
     },
     {
         "key": "ui-3",
@@ -57,17 +58,13 @@ FIGURES = [
             "① 登录方式：账号密码，或学号登录（机构 + 学号 + 密码）",
             "② 使用自动登录：勾选后由程序自己登录（含滑块验证）；失败会自动转成手动登录",
             "③ 保存到本机：账号密码在本机加密保存，下次运行免输入；随时可以清除",
-            "④ AI 答题接口：任何 OpenAI 兼容网关（OpenAI / DeepSeek / 通义 / 本地 Ollama 等）；留空则不使用 AI",
+            "④ AI 答题接口：任何「OpenAI 兼容」的接口都能直接填（自家开放平台、API 中转、"
+            "或自己在本地跑的小模型）；留空则完全不使用 AI",
         ],
-        "badges": [("1", 0.950, 0.168), ("2", 0.520, 0.301),
-                   ("3", 0.300, 0.353), ("4", 0.235, 0.396)],
+        "badges": [("1", 0.945, 0.159), ("2", 0.550, 0.304),
+                   ("3", 0.280, 0.385), ("4", 0.220, 0.436)],
     },
 ]
-
-# 图 3 里需要打码的敏感区域（账号、已保存的账号）
-PRIVATE_BOXES = {
-    "ui-3": [(0.042, 0.214, 0.975, 0.241), (0.183, 0.343, 0.280, 0.366)],
-}
 
 
 def load_font(path: str, size: int) -> ImageFont.FreeTypeFont:
@@ -103,20 +100,8 @@ def draw_badge(draw: ImageDraw.ImageDraw, x: float, y: float, radius: float,
               text, font=font, fill=(255, 255, 255))
 
 
-def pixelate(image: Image.Image, box: tuple[float, float, float, float],
-             blocks: int = 14) -> None:
-    left, top, right, bottom = (int(round(value)) for value in box)
-    region = image.crop((left, top, right, bottom))
-    small = region.resize((max(2, blocks), max(2, blocks)), Image.BILINEAR)
-    image.paste(small.resize(region.size, Image.NEAREST), (left, top))
-
-
-def build(figure: dict, source: Path, target: Path, private: bool = False) -> None:
+def build(figure: dict, source: Path, target: Path) -> None:
     image = Image.open(source).convert("RGB")
-    if private:
-        for box in PRIVATE_BOXES.get(figure["key"], []):
-            pixelate(image, (box[0] * image.width, box[1] * image.height,
-                             box[2] * image.width, box[3] * image.height))
     width, height = image.size
     title_font = load_font(FONT_BOLD, int(width * 0.0195))
     body_font = load_font(FONT_REG, int(width * 0.0160))
@@ -162,9 +147,6 @@ def main() -> int:
             print(f"找不到 {figure['key']} 的原图，跳过")
             continue
         build(figure, matches[0], target_dir / f"{figure['key']}.png")
-        if figure["key"] in PRIVATE_BOXES:
-            build(figure, matches[0], target_dir / f"{figure['key']}-private.png",
-                  private=True)
     return 0
 
 

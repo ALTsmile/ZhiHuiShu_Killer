@@ -21,6 +21,8 @@ LESSON_CLICK_TIMEOUT = 10_000
 MAX_CHAPTER_TEST_TRIES = 3
 # 同一条测验最多点几次（中间会把随堂练习等遮挡物清掉再点）
 MAX_CHAPTER_CLICK_TRIES = 3
+# 「每门课刷够 N 分钟」时最多复习几轮（防止目标设得过大时无限循环）
+MAX_REWATCH_ROUNDS = 6
 
 
 class Runner:
@@ -205,45 +207,111 @@ class Runner:
         todo = catalog_mod.unfinished(lessons, catalog)
         logger.info(f"共 {len(lessons)} 个课时，其中未完成 {len(todo)} 个。")
 
+        target_minutes = float(config.get("playback.min_minutes_per_course", 0) or 0)
+        rewatch = False
         if not todo:
-            if not config.data["playback"]["review_when_finished"]:
+            if target_minutes > 0:
+                logger.info(
+                    f"本课程视频都已完成，但设置了「每门课刷够 {target_minutes:.0f} 分钟」，"
+                    "将重看已完成的课时来凑学习时长。"
+                )
+                todo = lessons
+                rewatch = True
+            elif not config.data["playback"]["review_when_finished"]:
                 logger.success("本课程所有视频进度都已完成，跳过。")
                 self.stat_courses_skipped += 1
                 return True
-            logger.info("本课程已完成，按设置从头复习一遍。")
-            todo = lessons
+            else:
+                logger.info("本课程已完成，按设置从头复习一遍。")
+                todo = lessons
+                rewatch = True
 
         course_start = time.time()
         paused_total = 0.0
         ok = True
-        for position, lesson in enumerate(todo, 1):
-            bridge.check_stop()
-            bridge.status(f"课程 {index}/{total}：第 {position}/{len(todo)} 个课时")
-            result, title = self._play_one(
-                page, lesson, catalog, position, len(todo), course_start, paused_total
-            )
-            paused_total += result.paused_seconds
-            if result.reached_limit:
-                logger.warn("本门课程已达到设置的学习时限，转入下一门课程。")
+        round_index = 0
+        queue = list(todo)
+        queue_rewatch = rewatch
+        course_limit_hit = False
+        target_reached = False
+        while True:
+            round_index += 1
+            if round_index > 1:
+                logger.info(
+                    f"本门课本次只学了 "
+                    f"{self._course_minutes(course_start, paused_total):.1f} 分钟，"
+                    f"还不到 {target_minutes:.0f} 分钟，再复习一轮（第 {round_index} 轮）。"
+                )
+            for position, lesson in enumerate(queue, 1):
+                bridge.check_stop()
+                if queue_rewatch:
+                    bridge.status(
+                        f"课程 {index}/{total}：复习第 {round_index} 轮 "
+                        f"{position}/{len(queue)}"
+                    )
+                else:
+                    bridge.status(
+                        f"课程 {index}/{total}：第 {position}/{len(queue)} 个课时"
+                    )
+                result, title = self._play_one(
+                    page, lesson, catalog, position, len(queue), course_start,
+                    paused_total, rewatch=queue_rewatch,
+                )
+                paused_total += result.paused_seconds
+                if result.reached_limit:
+                    logger.warn("本门课程已达到设置的学习时限，转入下一门课程。")
+                    course_limit_hit = True
+                    break
+                if result.lesson_limit:
+                    logger.info(f"「{title}」达到单个视频时限，继续下一个课时。")
+                    continue
+                if not result.completed:
+                    ok = False
+                    self.stat_lessons_failed += 1
+                    logger.warn(f"「{title}」未确认完成：{result.reason}")
+                    logger.info("继续尝试下一个课时。")
+                else:
+                    self.stat_lessons_done += 1
+                    logger.success(f"「{title}」已完成。")
+                self._chapter_quiz(page)
+                # 刷够时长：每看完一个课时就检查一次，够了就结束本门课
+                if target_minutes > 0:
+                    elapsed = self._course_minutes(course_start, paused_total)
+                    if elapsed >= target_minutes:
+                        logger.success(
+                            f"本门课程本次已学 {elapsed:.1f} 分钟，"
+                            f"达到「每门课刷够 {target_minutes:.0f} 分钟」的要求。"
+                        )
+                        target_reached = True
+                        break
+            if course_limit_hit or target_reached:
                 break
-            if not result.completed:
-                ok = False
-                self.stat_lessons_failed += 1
-                logger.warn(f"「{title}」未确认完成：{result.reason}")
-                logger.info("继续尝试下一个课时。")
-            else:
-                self.stat_lessons_done += 1
-                logger.success(f"「{title}」已完成。")
-            self._chapter_quiz(page)
+            if target_minutes <= 0:
+                break
+            if round_index >= MAX_REWATCH_ROUNDS:
+                logger.warn(
+                    f"已复习 {round_index} 轮仍未达到 {target_minutes:.0f} 分钟，"
+                    "先跳到下一门课（可以把目标调小一点再试）。"
+                )
+                break
+            # 一轮走完还不够时长：下一轮把「全部课时（含已完成的）」再放一遍
+            queue = list(lessons)
+            queue_rewatch = True
 
         minutes = max(0.0, time.time() - course_start - paused_total) / 60
         logger.info(f"本课程本次学习用时约 {minutes:.1f} 分钟。")
         return ok
 
+    @staticmethod
+    def _course_minutes(course_start: float, paused_total: float) -> float:
+        """本门课程本次实际学习的分钟数（扣掉被弹窗/验证码打断的时间）。"""
+        return max(0.0, time.time() - course_start - paused_total) / 60
+
     # ------------------------------------------------------------------
     def _play_one(self, page: Page, lesson, catalog: site.Catalog, position: int,
-                  total: int, course_start: float, paused_before: float):
-        """点击并播放一个课时。"""
+                  total: int, course_start: float, paused_before: float,
+                  rewatch: bool = False):
+        """点击并播放一个课时（rewatch=True 表示复习/凑时长，会把视频从头重播）。"""
         config = self.config
         bridge = self.bridge
         logger = self.logger
@@ -259,13 +327,15 @@ class Runner:
         title = catalog_mod.lesson_title(page, lesson, catalog)
         before = catalog_mod.lesson_progress(lesson, catalog)
         logger.info(f"[{position}/{total}] 开始学习：{title}（当前平台进度 {before}%）")
+        if rewatch:
+            logger.info("（复习模式：这一遍会从头重新播放，按「放完一遍」判定完成）")
         bridge.progress(
             lesson=title, lesson_index=position, lesson_total=total, lesson_progress=before
         )
 
         result = watch_lesson(
             page, lesson, catalog, config, logger, bridge, self.ai,
-            course_start, paused_before, netlog=self.netlog,
+            course_start, paused_before, netlog=self.netlog, rewatch=rewatch,
         )
         self.stat_quizzes += result.quizzes
         if result.quizzes:

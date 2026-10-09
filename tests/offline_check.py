@@ -261,6 +261,7 @@ class _Bridge:
 
     def sleep(self, *_a, **_k): pass
     def check_stop(self): pass
+    def progress(self, **_k): pass
     def post(self, kind, payload=None):
         self.posts.append(kind)
         return len(self.posts)
@@ -1303,6 +1304,91 @@ def main() -> int:
             )
         finally:
             ai_mod.AI_RETRY_BACKOFF = original_backoff
+
+        print("30. 复习模式：进度已 100% 的课时要真的从头重播（回归：一进页面就判完成）")
+        import time as _time
+
+        page.set_content(
+            '<div class="lesson"><div class="progress" aria-valuenow="100"></div></div>'
+            "<video></video>"
+        )
+        page.evaluate(
+            """() => {
+                const v = document.querySelector('video');
+                window.__t = 6;                 // 这个课时已经播完了
+                window.__seekCalls = [];
+                window.__playing = false;
+                Object.defineProperty(v, 'duration', {get: () => 6});
+                Object.defineProperty(v, 'currentTime', {
+                    get: () => window.__t,
+                    set: (value) => { window.__seekCalls.push(value); window.__t = value; },
+                });
+                Object.defineProperty(v, 'ended', {get: () => window.__t >= 5.9});
+                Object.defineProperty(v, 'paused', {get: () => false});
+                v.play = () => { window.__playing = true; return Promise.resolve(); };
+                v.pause = () => {};
+                setInterval(() => {
+                    if (window.__playing && window.__t < 6) window.__t += 0.4;
+                }, 50);
+            }"""
+        )
+
+        class _PlayCatalog:
+            key = "wisdom"
+            progress = ".progress"
+            progress_attr = "aria-valuenow"
+            finish = ".child-check"
+
+        class _PlayConfig:
+            data = {
+                "playback": {
+                    "speed": 1.5, "volume": 0.01, "mute_browser": True,
+                    "max_minutes_per_course": 0, "max_minutes_per_lesson": 0,
+                    "min_minutes_per_course": 0, "stall_seconds": 150,
+                    "simulate_activity": False, "review_when_finished": False,
+                },
+                "diagnostics": {"record_events": False},
+            }
+
+            def get(self, key, default=None):
+                node = self.data
+                for part in str(key).split("."):
+                    if isinstance(node, dict) and part in node:
+                        node = node[part]
+                    else:
+                        return default
+                return node
+
+        class _PlayBridge(_Bridge):
+            def sleep(self, seconds=0.0, *_a, **_k):
+                if seconds:
+                    _time.sleep(min(float(seconds), 0.5))
+
+        lesson = page.locator(".lesson")
+        replay = player.watch_lesson(
+            page, lesson, _PlayCatalog(), _PlayConfig(), _Logger(), _PlayBridge(),
+            None, _time.time(), 0.0, rewatch=True,
+        )
+        seeks = page.evaluate("() => window.__seekCalls")
+        failures += not check(
+            "复习模式会把播放位置拉回开头（不是一进去就判完成）",
+            replay.completed is True and any(abs(value) < 0.5 for value in seeks),
+        )
+        failures += not check(
+            "这一遍确实播到了结尾",
+            page.evaluate("() => window.__t") >= 5.9,
+        )
+        # 对照组：不开复习时，进度 100% 仍然应该立刻判完成（保持原有行为）
+        page.evaluate("() => { window.__t = 6; window.__seekCalls = []; }")
+        quick = player.watch_lesson(
+            page, lesson, _PlayCatalog(), _PlayConfig(), _Logger(), _PlayBridge(),
+            None, _time.time(), 0.0, rewatch=False,
+        )
+        failures += not check(
+            "不开复习时，已完成的课时仍然立即跳过（行为不变）",
+            quick.completed is True
+            and page.evaluate("() => window.__seekCalls") == [],
+        )
 
         browser.close()
     print()

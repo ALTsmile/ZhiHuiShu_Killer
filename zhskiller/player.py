@@ -165,6 +165,7 @@ class LessonResult:
     completed: bool
     paused_seconds: float = 0.0
     reached_limit: bool = False
+    lesson_limit: bool = False
     reason: str = ""
     quizzes: int = 0
 
@@ -378,11 +379,17 @@ def handle_interruptions(page: Page, config, logger: Logger, bridge: Bridge,
 def watch_lesson(page: Page, lesson: Locator, catalog: site.Catalog, config,
                  logger: Logger, bridge: Bridge, ai: AiClient | None,
                  course_start: float, paused_before: float,
-                 netlog=None) -> LessonResult:
-    """播放并监控当前课时，直到平台进度记满、达到时限或确认卡死。"""
+                 netlog=None, rewatch: bool = False) -> LessonResult:
+    """播放并监控当前课时，直到平台进度记满、达到时限或确认卡死。
+
+    rewatch=True 表示这一遍是**复习 / 凑时长**：课时本来就是 100%，
+    所以不能用"平台进度 100%"当完成判据（否则一进页面就判完成、视频根本没播），
+    改成"这一遍从头播完"才算完成。
+    """
     playback = config.data["playback"]
     speed = playback["speed"]
     limit_minutes = playback["max_minutes_per_course"]
+    lesson_limit_minutes = float(playback.get("max_minutes_per_lesson") or 0)
     stall_limit = playback["stall_seconds"]
 
     if not wait_for_video(page, bridge, timeout=60):
@@ -411,6 +418,13 @@ def watch_lesson(page: Page, lesson: Locator, catalog: site.Catalog, config,
         f"（目标 音量 {playback['volume']} / 倍速 {speed}）"
     )
     force_play(page, logger)
+    lesson_started = time.monotonic()
+    if rewatch:
+        # 已看完的视频会停在结尾不动，必须先把播放位置拉回开头
+        seek(page, 0)
+        logger.info("复习模式：把播放位置拉回开头，重新播放这一课时。")
+        bridge.sleep(1.0)
+        force_play(page, logger)
 
     paused_seconds = 0.0
     last_catalog_progress = -1
@@ -455,9 +469,24 @@ def watch_lesson(page: Page, lesson: Locator, catalog: site.Catalog, config,
                     quizzes=quiz_count,
                 )
 
+        # ---- 达到单个视频时限 ----
+        if lesson_limit_minutes > 0:
+            lesson_elapsed = (
+                time.monotonic() - lesson_started - paused_seconds
+            ) / 60
+            if lesson_elapsed >= lesson_limit_minutes:
+                logger.warn(
+                    f"本视频已学 {lesson_elapsed:.1f} 分钟，达到「单个视频最长 "
+                    f"{lesson_limit_minutes:.0f} 分钟」，先看下一个课时。"
+                )
+                return LessonResult(
+                    False, paused_seconds, lesson_limit=True,
+                    reason="达到单视频时限", quizzes=quiz_count,
+                )
+
         # ---- 平台进度 ----
         progress = catalog_mod.lesson_progress(lesson, catalog)
-        if progress >= 100:
+        if progress >= 100 and not rewatch:
             logger.success(f"平台已记录该课时 100%（播放器 {last_video_time:.0f}s）。")
             return LessonResult(True, paused_seconds, quizzes=quiz_count)
         if progress > last_catalog_progress:
@@ -532,6 +561,11 @@ def watch_lesson(page: Page, lesson: Locator, catalog: site.Catalog, config,
         if duration > 0 and (state.get("ended") or current >= duration - 1.0):
             bridge.sleep(3.0)
             refreshed = catalog_mod.lesson_progress(lesson, catalog)
+            if rewatch:
+                logger.success(
+                    f"复习完成：这一遍已从头播完（平台进度 {refreshed}%）。"
+                )
+                return LessonResult(True, paused_seconds, quizzes=quiz_count)
             if refreshed >= 100:
                 return LessonResult(True, paused_seconds, quizzes=quiz_count)
             gained = refreshed - end_progress_mark
@@ -591,6 +625,8 @@ def watch_lesson(page: Page, lesson: Locator, catalog: site.Catalog, config,
         # 表现就是播放器正常走、平台进度一直是 0%。这里定时补一轮鼠标操作。
         now_mono = time.monotonic()
         if (
+            not rewatch
+            and
             last_video_time > 5
             and now_mono - progress_changed_at >= PROGRESS_STALL_SECONDS
             and now_mono - last_probe_at >= PROGRESS_PROBE_INTERVAL

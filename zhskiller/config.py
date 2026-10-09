@@ -42,7 +42,14 @@ DEFAULTS: dict[str, Any] = {
         # True = 用浏览器层面的静音（启动参数 --mute-audio），完全不改播放器音量。
         # 只有在它被关掉时，上面的 volume 才会生效。
         "mute_browser": True,
-        "max_minutes_per_course": 0,  # 0 = 不限制
+        # 单个视频最多学多久（分钟），0 = 不限制
+        "max_minutes_per_lesson": 0,
+        # 每门课程（界面上填的每个课程网址）本次最多学多久（分钟），0 = 不限制
+        "max_minutes_per_course": 0,
+        # 每门课程本次至少要学够多久（分钟），0 = 不用。
+        # 用于刷平台的"规律学习"评分：学够之后才换下一门课，
+        # 视频都看完了会重看已完成的课时来凑时长。
+        "min_minutes_per_course": 0,
         "stall_seconds": 150,        # 视频与平台进度都不动多久算卡住
         "review_when_finished": False,  # 课程全部学完后是否再从头复习一遍
         # 模拟真人鼠标操作（含一次顶部栏点击），用于触发平台的学习时长上报
@@ -176,9 +183,9 @@ class Config:
         playback["speed"] = round(clamp(_to_float(playback.get("speed"), 1.5), 0.5, 2.0), 2)
         playback["volume"] = round(clamp(_to_float(playback.get("volume"), 1.0), 0.0, 1.0), 2)
         playback["mute_browser"] = bool(playback.get("mute_browser", True))
-        playback["max_minutes_per_course"] = max(
-            0.0, _to_float(playback.get("max_minutes_per_course"), 0.0)
-        )
+        for key in ("max_minutes_per_lesson", "max_minutes_per_course",
+                    "min_minutes_per_course"):
+            playback[key] = max(0.0, _to_float(playback.get(key), 0.0))
         playback["stall_seconds"] = int(clamp(_to_float(playback.get("stall_seconds"), 150), 30, 3600))
         playback["review_when_finished"] = bool(playback.get("review_when_finished", False))
         playback["simulate_activity"] = bool(playback.get("simulate_activity", True))

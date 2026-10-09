@@ -442,18 +442,34 @@ class App(tk.Tk):
             play, from_=0.5, to=2.0, increment=0.1, textvariable=self.speed_var, width=7
         ).grid(row=0, column=1, sticky="w", pady=2)
 
-        ttk.Label(play, text="单门时限/分钟").grid(
+        ttk.Label(play, text="单个视频最长/分钟").grid(
             row=0, column=2, sticky="w", padx=(20, 6), pady=2
+        )
+        self.lesson_limit_var = tk.StringVar(value="0")
+        ttk.Spinbox(
+            play, from_=0, to=1440, increment=5, textvariable=self.lesson_limit_var, width=7
+        ).grid(row=0, column=3, sticky="w", pady=2)
+
+        ttk.Label(play, text="每门课最长/分钟").grid(
+            row=1, column=0, sticky="w", padx=(0, 6), pady=2
         )
         self.limit_var = tk.StringVar(value="0")
         ttk.Spinbox(
-            play, from_=0, to=1440, increment=10, textvariable=self.limit_var, width=7
-        ).grid(row=0, column=3, sticky="w", pady=2)
+            play, from_=0, to=100000, increment=10, textvariable=self.limit_var, width=7
+        ).grid(row=1, column=1, sticky="w", pady=2)
+        ttk.Label(play, text="每门课刷够/分钟").grid(
+            row=1, column=2, sticky="w", padx=(20, 6), pady=2
+        )
+        self.course_target_var = tk.StringVar(value="0")
+        ttk.Spinbox(
+            play, from_=0, to=100000, increment=5, textvariable=self.course_target_var,
+            width=7,
+        ).grid(row=1, column=3, sticky="w", pady=2)
 
         # 音量与静音放在同一行紧挨着，避免"找不到静音在哪"
-        ttk.Label(play, text="音量").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=2)
+        ttk.Label(play, text="音量").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=2)
         volume_row = ttk.Frame(play)
-        volume_row.grid(row=1, column=1, columnspan=3, sticky="w", pady=2)
+        volume_row.grid(row=2, column=1, columnspan=3, sticky="w", pady=2)
         self.volume_var = tk.StringVar(value="0.01")
         self.volume_spin = ttk.Spinbox(
             volume_row, from_=0.01, to=1.0, increment=0.01,
@@ -470,21 +486,30 @@ class App(tk.Tk):
         self.mute_check.pack(side="left", padx=(10, 0))
 
         ttk.Label(play, text="停滞判定/秒").grid(
-            row=2, column=0, sticky="w", padx=(0, 6), pady=2
+            row=3, column=0, sticky="w", padx=(0, 6), pady=2
         )
         self.stall_var = tk.StringVar(value="150")
         ttk.Spinbox(
             play, from_=30, to=3600, increment=30, textvariable=self.stall_var, width=7
-        ).grid(row=2, column=1, sticky="w", pady=2)
+        ).grid(row=3, column=1, sticky="w", pady=2)
         self.review_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             play, text="课程学完后从头复习一遍", variable=self.review_var
-        ).grid(row=2, column=2, sticky="w", padx=(20, 12), pady=2)
+        ).grid(row=3, column=2, sticky="w", padx=(20, 12), pady=2)
         self.activity_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             play, text="模拟真人鼠标操作（触发学习时长上报）",
             variable=self.activity_var,
-        ).grid(row=2, column=3, sticky="w", pady=2)
+        ).grid(row=3, column=3, sticky="w", pady=2)
+        ttk.Label(
+            play,
+            text="「单个视频最长」= 一个视频看多久；"
+                 "「每门课最长 / 刷够」= 每个课程网址本次最多 / 至少学多久"
+                 "（刷够会重看已完成的视频）。",
+            style="Hint.TLabel",
+            wraplength=980,
+            justify="left",
+        ).grid(row=4, column=0, columnspan=4, sticky="w", pady=(4, 0))
 
         # ---------------- 答题 ----------------
         lower = ttk.Frame(tab)
@@ -729,6 +754,8 @@ class App(tk.Tk):
         self.volume_var.set(str(cfg.get("playback.volume", 1.0)))
         self.mute_browser_var.set(bool(cfg.get("playback.mute_browser", True)))
         self.limit_var.set(str(cfg.get("playback.max_minutes_per_course", 0)))
+        self.lesson_limit_var.set(str(cfg.get("playback.max_minutes_per_lesson", 0)))
+        self.course_target_var.set(str(cfg.get("playback.min_minutes_per_course", 0)))
         self.stall_var.set(str(cfg.get("playback.stall_seconds", 150)))
         self.review_var.set(bool(cfg.get("playback.review_when_finished", False)))
         self.activity_var.set(bool(cfg.get("playback.simulate_activity", True)))
@@ -778,6 +805,8 @@ class App(tk.Tk):
         cfg.set("playback.volume", self.volume_var.get())
         cfg.set("playback.mute_browser", self.mute_browser_var.get())
         cfg.set("playback.max_minutes_per_course", self.limit_var.get())
+        cfg.set("playback.max_minutes_per_lesson", self.lesson_limit_var.get())
+        cfg.set("playback.min_minutes_per_course", self.course_target_var.get())
         cfg.set("playback.stall_seconds", self.stall_var.get())
         cfg.set("playback.review_when_finished", self.review_var.get())
         cfg.set("playback.simulate_activity", self.activity_var.get())
