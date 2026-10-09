@@ -1502,6 +1502,60 @@ def main() -> int:
             and page.evaluate("() => window.__barClicks") >= 1,
         )
 
+        print("33. 清理弹窗时不能点「夜间模式」（回归：每两秒换一次主题）")
+        page.set_content(
+            '<div class="Patternbtn-div" id="night"><svg class="icon"></svg>'
+            "<p>夜间模式</p></div>"
+        )
+        page.evaluate(
+            """() => {
+                window.__nightClicks = 0;
+                document.querySelector('#night')
+                    .addEventListener('click', () => { window.__nightClicks += 1; });
+            }"""
+        )
+        popups.close_announcements(page, _Logger())
+        failures += not check(
+            "文字是「夜间模式」时一个都不点",
+            page.evaluate("() => window.__nightClicks") == 0,
+        )
+        page.set_content(
+            '<div class="Patternbtn-div" id="rest"><em class="iconfont"></em>'
+            "<p>休息提醒</p></div>"
+        )
+        page.evaluate(
+            """() => {
+                window.__restClicks = 0;
+                document.querySelector('#rest')
+                    .addEventListener('click', () => { window.__restClicks += 1; });
+            }"""
+        )
+        popups.close_announcements(page, _Logger())
+        failures += not check(
+            "真正的「休息提醒」按钮照旧点掉",
+            page.evaluate("() => window.__restClicks") == 1,
+        )
+
+        print("34. 答选项要用真实鼠标点击（回归：合成事件站点不认，答了等于没答）")
+        page.set_content(
+            '<ul class="topic-list">'
+            '<li class="topic-item" data-zhs-opt="0:0"><div><svg></svg></div>'
+            '<span>球状结构</span></li></ul>'
+        )
+        page.evaluate(
+            """() => {
+                window.__trusted = null;
+                document.querySelector('.topic-item').addEventListener('click', (e) => {
+                    window.__trusted = e.isTrusted;
+                });
+            }"""
+        )
+        quiz._click_tag(page, "opt", "0:0")
+        failures += not check(
+            "点击事件 isTrusted = true（站点不会当成脚本伪造而忽略）",
+            page.evaluate("() => window.__trusted") is True,
+        )
+
         browser.close()
     print()
     print("全部通过 ✅" if failures == 0 else f"有 {failures} 项失败 ❌")

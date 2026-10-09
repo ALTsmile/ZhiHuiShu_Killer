@@ -187,14 +187,25 @@ def close_announcements(page: Page, logger: Logger) -> bool:
         except Exception:
             pass
 
-    # 夜间模式的「休息提醒」按钮，点掉即可
+    # 有些课程会在页面右上角挂一个「休息提醒」按钮（.Patternbtn-div），点掉即可。
+    # 但**另一些课程同一个 class 就是「夜间模式」开关** —— 点了页面会一直换主题，
+    # 非常晃眼。所以这里必须先看文字，带"夜间/日间/模式/主题"的一律不碰。
     try:
         if is_visible(page, site.PATTERN_BTN):
-            page.evaluate(
-                "(sel) => { const el = document.querySelector(sel); if (el) el.click(); }",
+            text = page.evaluate(
+                "(sel) => { const el = document.querySelector(sel);"
+                " return el ? (el.innerText || el.textContent || '') : ''; }",
                 site.PATTERN_BTN,
             )
-            acted = True
+            text = (text or "").strip()
+            if any(word in text for word in ("夜间", "日间", "模式", "主题", "换肤")):
+                pass                      # 这是主题切换开关，别点
+            else:
+                page.evaluate(
+                    "(sel) => { const el = document.querySelector(sel); if (el) el.click(); }",
+                    site.PATTERN_BTN,
+                )
+                acted = True
     except Exception:
         pass
     return acted

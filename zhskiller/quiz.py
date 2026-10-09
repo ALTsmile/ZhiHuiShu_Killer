@@ -244,7 +244,14 @@ _SCAN_JS = r"""
 
     // ---------- 5. 关闭按钮（解析弹窗靠它关掉） ----------
     let close = null;
+    // 优先找文案就是「关闭」的按钮（翻转课的面板底部就是它，是站点自己的关闭入口）
+    const closers = Array.from(document.querySelectorAll(
+        ".playTopic-dialog .dialog-footer .btn, .dialog-footer .btn,"
+        + " .close-box .icon-close, .close-box, .el-dialog__headerbtn"
+    )).filter(isRenderable);
+    close = closers.find((el) => flat(el).includes("关闭")) || null;
     for (const selector of closeSelectors) {
+        if (close) break;
         const candidates = Array.from(document.querySelectorAll(selector))
             .filter(isRenderable);
         if (candidates.length) { close = candidates[candidates.length - 1]; break; }
@@ -306,24 +313,48 @@ def _clear_tags(page: Page) -> None:
 def _click_tag(page: Page, attribute: str, value: str = "1") -> bool:
     """点击被标记的元素。
 
-    注意必须用 dispatchEvent 而不是 el.click()：
+    优先用**真实鼠标**点元素中心 —— 和真人点击完全一样（事件 isTrusted=true），
+    站点不会因为"事件不可信"而忽略；而且真实点击的落点是元素中心那个**子元素**，
+    正好是 Vue 里绑定 @click 的那一层（翻转课的弹题就是这么写的，
+    用 dispatchEvent 点在 <li> 上它不认，结果就是"以为答了题其实没答"）。
+
+    元素量不到尺寸（或鼠标点击失败）时，退回 dispatchEvent：
     关闭按钮是 <svg class="icon-close">，SVGElement 上没有 click() 方法，
-    直接调 el.click() 会抛 TypeError（之前就是被这个坑住，弹窗永远关不掉）。
+    直接调 el.click() 会抛 TypeError。
     """
+    selector = f"[data-zhs-{attribute}=\"{value}\"]"
+    try:
+        box = page.evaluate(
+            """(sel) => {
+                const el = document.querySelector(sel);
+                if (!el) return null;
+                try { el.scrollIntoView({block: 'center', inline: 'center'}); } catch (e) {}
+                const r = el.getBoundingClientRect();
+                return {x: r.x + r.width / 2, y: r.y + r.height / 2,
+                        w: r.width, h: r.height};
+            }""",
+            selector,
+        )
+    except Exception:
+        box = None
+    if box and box.get("w") and box.get("h"):
+        try:
+            page.mouse.click(float(box["x"]), float(box["y"]))
+            return True
+        except Exception:
+            pass
     try:
         return bool(
             page.evaluate(
-                """(args) => {
-                    const el = document.querySelector(
-                        `[data-zhs-${args.attribute}="${args.value}"]`);
+                """(sel) => {
+                    const el = document.querySelector(sel);
                     if (!el) return false;
-                    try { el.scrollIntoView({block: 'center'}); } catch (e) {}
                     el.dispatchEvent(new MouseEvent('click', {
                         bubbles: true, cancelable: true, view: window,
                     }));
                     return true;
                 }""",
-                {"attribute": attribute, "value": value},
+                selector,
             )
         )
     except Exception:
