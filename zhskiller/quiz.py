@@ -180,17 +180,32 @@ _SCAN_JS = r"""
     const questions = [];
     groups.forEach((group, groupPos) => {
         if (!group.options.length) return;
-        // 题干：题目容器自己找不到时，往上/往同级找标题
-        //（翻转课的弹题里 .topic-title 是 .topic-list 的兄弟节点）
-        let stemNode = group.root.querySelector(
-            ".title, .topic-title, .subject_describe, .subject_stem, .stem");
-        if (!stemNode && group.root.parentElement) {
-            stemNode = group.root.parentElement.querySelector(
-                ".topic-title, .title, .subject_describe");
-        }
-        const stem = flat(stemNode || group.root).slice(0, 400);
-        const typeNode = (stemNode || group.root).querySelector(
-            ".title-tit, .subject_type, [class*='type']");
+        // 题干：优先题目自己的 .title；翻转课的弹题要把整块容器拿来看 ——
+        // 那里的题干文字在 DOM 里常常是 .topic-title 的**兄弟节点**
+        //（<p> 不能嵌 <p>，浏览器解析时会自动拆开），只读 .topic-title
+        // 会只拿到「【多选题】」这种类型标记。
+        const stemOf = (root) => {
+            const own = root.querySelector(".title");
+            if (own) return flat(own);
+            let text = "";
+            const titleNode = root.querySelector(".topic-title");
+            if (titleNode) text = flat(titleNode);
+            const holder = root.parentElement;
+            if (holder) {
+                const clone = holder.cloneNode(true);
+                clone.querySelectorAll(
+                    "ul, ol, .topic-list, .el-pagination, .options, .analysis"
+                ).forEach((node) => node.remove());
+                const whole = ((clone.textContent || "").split(/\s+/).join(" ")).trim();
+                if (whole.length > text.length) text = whole;
+            }
+            return text || flat(root);
+        };
+        const stem = stemOf(group.root).slice(0, 400);
+        const typeNode = group.root.querySelector(
+            ".title-tit, .subject_type, [class*='type']"
+        ) || (group.root.parentElement && group.root.parentElement.querySelector(
+            ".title-tit, .subject_type"));
         const typeText = typeNode ? flat(typeNode) : stem;
         const answered = group.options.some((o) => o.checked)
             || Boolean(group.root.querySelector(
