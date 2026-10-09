@@ -1399,6 +1399,109 @@ def main() -> int:
             and page.evaluate("() => window.__seekCalls") == [],
         )
 
+        print("31. 翻转课弹题（.topic-list + 多选题）：当成一道多选题作答并关掉")
+        page.set_content(
+            '<div class="playTopic-dialog" style="z-index:2001">'
+            '<div role="dialog" aria-modal="true" class="el-dialog">'
+            '<div class="el-dialog__header">'
+            '<button type="button" aria-label="Close" class="el-dialog__headerbtn">×</button>'
+            "</div>"
+            '<div class="el-dialog__body"><div class="topic"><div class="radio">'
+            '<p class="topic-title"><span class="title-tit">【多选题】</span>'
+            "<span>高性能永磁材料所需要的（ ）等稀土金属，这些是钢铁材料无法替代的。</span></p>"
+            '<ul class="topic-list">'
+            '<li class="topic-item"><div><svg class="icon topic-option"></svg></div>'
+            '<span class="topic-option-item">A.</span>'
+            '<div class="item-topic"><p>Nd 釹</p></div></li>'
+            '<li class="topic-item"><div><svg class="icon topic-option"></svg></div>'
+            '<span class="topic-option-item">B.</span>'
+            '<div class="item-topic"><p>Pr 镨</p></div></li>'
+            '<li class="topic-item"><div><svg class="icon topic-option"></svg></div>'
+            '<span class="topic-option-item">C.</span>'
+            '<div class="item-topic"><p>Dy 镝</p></div></li>'
+            '<li class="topic-item"><div><svg class="icon topic-option"></svg></div>'
+            '<span class="topic-option-item">D.</span>'
+            '<div class="item-topic"><p>Mn 锰</p></div></li>'
+            "</ul></div></div></div>"
+            '<div class="el-dialog__footer"><span class="dialog-footer">'
+            '<div class="btn">关闭</div></span></div>'
+            "</div></div>"
+        )
+        # set_content 第二次写同一页面时内联 <script> 不执行，这里显式注入假站点行为
+        page.evaluate(
+            """() => {
+                window.__clicked = [];
+                document.querySelectorAll('.topic-item').forEach(li => {
+                    li.addEventListener('click', () => {
+                        window.__clicked.push(
+                            li.querySelector('.topic-option-item').textContent.trim());
+                        li.classList.add('is-checked');
+                    });
+                });
+                document.querySelector('.dialog-footer .btn').addEventListener('click', () => {
+                    window.__closed = true;
+                    document.querySelector('.playTopic-dialog').remove();
+                });
+            }"""
+        )
+        topic_scan = quiz._scan(page)
+        failures += not check(
+            "识别为 1 道题（不是每个选项一道题）",
+            bool(topic_scan) and len(topic_scan["questions"]) == 1,
+        )
+        failures += not check(
+            "识别到 4 个选项",
+            bool(topic_scan) and len(topic_scan["questions"][0]["options"]) == 4,
+        )
+        failures += not check(
+            "题干是题目正文本身（不是选项文字）",
+            bool(topic_scan) and "永磁材料" in topic_scan["questions"][0]["text"],
+        )
+        failures += not check(
+            "按【多选题】标记识别为多选",
+            bool(topic_scan) and topic_scan["questions"][0].get("multi") is True,
+        )
+        topic_ok = quiz.handle_quiz(
+            page, _Config({"quiz.in_video_mode": "random"}), _Logger(), _Bridge(),
+            None, "in_video", "随堂练习",
+        )
+        clicked = page.evaluate("() => window.__clicked")
+        failures += not check(
+            "多选随机时点了 2 个不同选项（没有反复选中/取消）",
+            len(clicked) == 2 and len(set(clicked)) == 2,
+        )
+        failures += not check(
+            "作答后点了底部「关闭」把弹题关掉",
+            topic_ok is True
+            and page.locator(".playTopic-dialog").count() == 0
+            and page.evaluate("() => Boolean(window.__closed)"),
+        )
+
+        print("32. 模拟真人操作：绝不点「夜间模式」这类按钮（回归：页面反复换主题）")
+        page.set_content(
+            '<div id="bar" style="position:absolute;left:0;top:0;right:0;height:60px;'
+            'background:#eee"></div>'
+            '<div class="Patternbtn-div" style="position:absolute;right:8px;top:14px;'
+            'width:80px;height:32px;background:#ccc"><p>夜间模式</p></div>'
+            '<video style="position:absolute;left:0;top:80px;width:640px;height:360px"></video>'
+        )
+        page.evaluate(
+            """() => {
+                window.__modeClicks = 0;
+                window.__barClicks = 0;
+                document.querySelector('.Patternbtn-div')
+                    .addEventListener('click', () => { window.__modeClicks += 1; });
+                document.querySelector('#bar')
+                    .addEventListener('click', () => { window.__barClicks += 1; });
+            }"""
+        )
+        player.human_activity(page, _Logger(), rounds=1, allow_click=True)
+        failures += not check(
+            "点的是顶部空白处，没点到「夜间模式」",
+            page.evaluate("() => window.__modeClicks") == 0
+            and page.evaluate("() => window.__barClicks") >= 1,
+        )
+
         browser.close()
     print()
     print("全部通过 ✅" if failures == 0 else f"有 {failures} 项失败 ❌")

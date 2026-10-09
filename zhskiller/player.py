@@ -114,19 +114,22 @@ def human_activity(page: Page, logger: Logger, rounds: int = 3,
     Playwright 的 mouse.move/click 走的是真实输入通道（trusted event），
     所以这里用小幅鼠移动 + 来回微滚动来"唤醒"上报。
 
-    特意避开视频区域中心：那里是播放/暂停切换键的命中位置。
-    需要真实 click 时，只点顶部栏的空白处，并且点完立刻校验 URL 有没有被改掉。
+    鼠标移动只在**视频区域内**晃（移动不会触发任何按钮）；
+    需要真实 click 时交给 _safe_click 找一个确认安全的空白点。
     """
-    try:
-        size = page.evaluate("() => ({w: innerWidth, h: innerHeight})") or {}
-        width = int(size.get("w") or 1280)
-        height = int(size.get("h") or 720)
-    except Exception:
-        width, height = 1280, 720
+    area = _hover_area(page)
     try:
         for _ in range(max(1, rounds)):
-            x = random.randint(int(width * 0.60), int(width * 0.94))
-            y = random.randint(int(height * 0.10), int(height * 0.30))
+            x = random.randint(
+                int(area["x"] + area["w"] * 0.08),
+                max(int(area["x"] + area["w"] * 0.08) + 1,
+                    int(area["x"] + area["w"] * 0.60)),
+            )
+            y = random.randint(
+                int(area["y"] + area["h"] * 0.12),
+                max(int(area["y"] + area["h"] * 0.12) + 1,
+                    int(area["y"] + area["h"] * 0.70)),
+            )
             page.mouse.move(x, y, steps=random.randint(10, 20))
             page.wait_for_timeout(random.randint(80, 200))
             # 来回各滚一点，净位移为 0，不会真的把页面滚走
@@ -135,22 +138,85 @@ def human_activity(page: Page, logger: Logger, rounds: int = 3,
             page.mouse.wheel(0, -120)
             page.wait_for_timeout(random.randint(120, 260))
         if allow_click:
-            _safe_click(page, logger, width)
+            _safe_click(page, logger)
     except Exception as exc:
         logger.debug(f"模拟鼠标操作失败：{exc}")
 
 
-def _safe_click(page: Page, logger: Logger, width: int) -> None:
-    """在顶部栏空白处点一下（真实 click）。
+def _hover_area(page: Page) -> dict:
+    """鼠标移动的落点范围：优先视频区域（移动不会点到任何按钮）。"""
+    try:
+        area = page.evaluate(
+            """() => {
+                const w = innerWidth, h = innerHeight;
+                const v = document.querySelector('video');
+                const box = v ? v.getBoundingClientRect() : null;
+                if (box && box.width > 200 && box.height > 100) {
+                    return {x: box.left, y: box.top, w: box.width, h: box.height};
+                }
+                return {x: 0, y: Math.round(h * 0.15), w: Math.round(w * 0.6),
+                        h: Math.max(120, Math.round(h * 0.5))};
+            }"""
+        )
+    except Exception:
+        area = None
+    if not isinstance(area, dict) or not area.get("w"):
+        return {"x": 0, "y": 80, "w": 800, "h": 400}
+    return area
 
-    有些站点的"学习时长上报"要等到收到真实 click 才开始，
-    所以这里补一次；点完立刻确认没把自己点跑。
+
+# 找"点上去安全"的空白点：排除按钮/图标/链接/svg，以及 class 里带
+# mode / theme / menu / btn 这类字样的元素（「夜间模式」按钮就属于这类）。
+_SAFE_POINT_JS = r"""
+() => {
+    const bad = /(btn|button|icon|close|fullscreen|volume|play|pause|next|prev|switch|toggle|mode|theme|skin|menu|tab|navbar|toolbar|dropdown|select)/i;
+    const safe = (el) => {
+        let node = el;
+        for (let i = 0; i < 4 && node; i++) {
+            const tag = node.tagName;
+            const cls = String(node.className || '');
+            if (node.onclick || tag === 'BUTTON' || tag === 'A' || tag === 'SVG'
+                || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA'
+                || tag === 'VIDEO' || bad.test(cls)) {
+                return false;
+            }
+            node = node.parentElement;
+        }
+        return true;
+    };
+    const w = innerWidth;
+    const found = [];
+    for (let x = Math.round(w * 0.06); x <= Math.round(w * 0.94); x += 26) {
+        for (let y = 8; y <= 66; y += 14) {
+            const el = document.elementFromPoint(x, y);
+            if (el && safe(el)) found.push([x, y]);
+        }
+    }
+    if (!found.length) return null;
+    return found[Math.floor(found.length / 2)];
+}
+"""
+
+
+def _safe_click(page: Page, logger: Logger) -> None:
+    """在页面上找一个确定安全的空白处点一下（真实 click）。
+
+    有些站点的"学习时长上报"要等到收到真实 click 才开始，所以要补一次。
+    但**不能盲点固定坐标**：以前固定点顶部栏中间，在「翻转课（旧版）」上
+    正好压到右上角的「夜间模式」按钮，页面一会儿一换主题、很晃眼。
+    现在让页面自己扫一遍候选点（按钮/图标/链接/带 mode、theme 字样的全排除），
+    扫不到安全的点就干脆不点 —— 只保留鼠标移动同样能触发上报。
     """
+    try:
+        point = page.evaluate(_SAFE_POINT_JS)
+    except Exception:
+        point = None
+    if not point:
+        logger.debug("没找到安全的点击位置，本次只做鼠标移动。")
+        return
     before_url = page.url
     try:
-        x = int(width * 0.5) + random.randint(-40, 40)
-        y = random.randint(28, 46)
-        page.mouse.click(x, y)
+        page.mouse.click(int(point[0]), int(point[1]))
         page.wait_for_timeout(180)
         if page.url != before_url:
             logger.warn("模拟点击意外触发了跳转，正在返回课程页…")

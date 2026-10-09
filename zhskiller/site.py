@@ -243,6 +243,8 @@ QUIZ_SUBMIT_TEXTS = (
     "提交作答", "提交答案", "提交", "确定", "确认", "下一题", "继续", "完成", "知道了",
 )
 QUIZ_CLOSE_SELECTORS = (
+    # 「翻转课（旧版）」的 AI 助教弹题：底部有明确的「关闭」按钮，优先用它
+    ".playTopic-dialog .dialog-footer .btn",
     ".close-box .icon-close",
     ".close-box svg",
     ".close-box",

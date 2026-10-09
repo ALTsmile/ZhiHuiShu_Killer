@@ -137,7 +137,13 @@ _SCAN_JS = r"""
     }
     const groupOf = (el) => {
         for (const selector of groupSelectors) {
-            const parent = el.closest(selector);
+            let parent = el.closest(selector);
+            // 命中的是选项自己时（比如 <li class="topic-item"> 会被 "li"、
+            // "[class*='topic']" 命中），说明这个选择器指的是"选项"而不是"题目"，
+            // 继续往上找真正的题目容器，否则会把每个选项当成一道题。
+            while (parent && parent === el && el.parentElement) {
+                parent = el.parentElement.closest(selector);
+            }
             if (parent && scope.contains(parent)) return parent;
         }
         return scope;
@@ -174,6 +180,18 @@ _SCAN_JS = r"""
     const questions = [];
     groups.forEach((group, groupPos) => {
         if (!group.options.length) return;
+        // 题干：题目容器自己找不到时，往上/往同级找标题
+        //（翻转课的弹题里 .topic-title 是 .topic-list 的兄弟节点）
+        let stemNode = group.root.querySelector(
+            ".title, .topic-title, .subject_describe, .subject_stem, .stem");
+        if (!stemNode && group.root.parentElement) {
+            stemNode = group.root.parentElement.querySelector(
+                ".topic-title, .title, .subject_describe");
+        }
+        const stem = flat(stemNode || group.root).slice(0, 400);
+        const typeNode = (stemNode || group.root).querySelector(
+            ".title-tit, .subject_type, [class*='type']");
+        const typeText = typeNode ? flat(typeNode) : stem;
         const answered = group.options.some((o) => o.checked)
             || Boolean(group.root.querySelector(
                 ".analyze-box, .answer-container, .analyze"))
@@ -182,7 +200,9 @@ _SCAN_JS = r"""
             option.node.setAttribute("data-zhs-opt", groupPos + ":" + optionPos);
         });
         questions.push({
-            text: flat(group.root.querySelector(".title") || group.root).slice(0, 400),
+            text: stem,
+            // 多选题要一次选多个：靠题干里的【多选题】标记判断
+            multi: /多选|不定项|multiple/.test(typeText),
             answered,
             options: group.options.map((o) => ({
                 tag: o.node.getAttribute("data-zhs-opt"),
@@ -295,30 +315,63 @@ def _click_tag(page: Page, attribute: str, value: str = "1") -> bool:
         return False
 
 
+def _choose_indices(question: dict, options: list[str], mode: str,
+                    ai: AiClient | None, logger: Logger,
+                    config=None, bridge: Bridge | None = None,
+                    examine: str = "in_video") -> list[int] | None:
+    """挑出要点的选项下标：单选返回 1 个，多选返回多个；None = 交给用户。
+
+    AI 用不了时的处理和其他地方一致：先重试（AiClient 内部会重试 5 次），
+    再弹窗问用户「继续用 AI / 改用随机 / 改用手动」。
+    """
+    multi = bool(question.get("multi")) and len(options) > 1
+    stem = question.get("text") or ""
+    if mode == "ai" and ai and ai.ready and ai.cooling_down:
+        logger.debug("AI 处于冷却期（刚刚连续失败），这题先用随机答案。")
+    elif mode == "ai" and ai and ai.ready:
+        attempt = 0
+        while attempt < 2:                 # 第一次失败后，用户若选"继续用 AI"就再试一轮
+            attempt += 1
+            if multi:
+                indices = ai.choose_multi(stem, options)
+                if indices:
+                    logger.info(
+                        f"AI（多选）选择：{[options[i][:24] for i in indices]}"
+                    )
+                    return sorted(indices)
+            else:
+                index = ai.choose(stem, options)
+                if index is not None and index < len(options):
+                    logger.info(f"AI 选择第 {index + 1} 个选项：{options[index][:32]}")
+                    return [index]
+            decision = ai_mod.resolve_ai_failure(ai, bridge, config, logger, examine)
+            if decision == "ai":
+                logger.info("按你的选择重新用 AI 作答…")
+                continue
+            if decision == "manual":
+                return None
+            logger.warn("AI 仍然没能作答，这题先用随机答案，稍后会自动再试 AI。")
+            ai.start_cooldown()
+            break
+    if mode == "manual":
+        return None
+    if multi:                              # 随机时多选也选 2 项
+        return sorted(random.sample(range(len(options)), min(2, len(options))))
+    return [random.randrange(len(options))]
+
+
 def _choose_index(question: str, options: list[str], mode: str,
                   ai: AiClient | None, logger: Logger,
                   config=None, bridge: Bridge | None = None,
                   examine: str = "in_video") -> int | None:
     """选一个选项。返回 None 表示"交给用户作答"。"""
-    if mode == "ai" and ai and ai.ready and ai.cooling_down:
-        logger.debug("AI 处于冷却期（刚刚连续失败），这题先用随机答案。")
-    elif mode == "ai" and ai and ai.ready:
-        index = ai.choose(question, options)
-        if index is not None and index < len(options):
-            logger.info(f"AI 选择第 {index + 1} 个选项：{options[index][:32]}")
-            return index
-        decision = ai_mod.resolve_ai_failure(ai, bridge, config, logger, examine)
-        if decision == "ai":
-            # 用户说"我续费/改好了" —— 再老老实实试一轮
-            index = ai.choose(question, options)
-            if index is not None and index < len(options):
-                logger.info(f"AI 选择第 {index + 1} 个选项：{options[index][:32]}")
-                return index
-            logger.warn("AI 仍然没能作答，这题先用随机答案，稍后会自动再试 AI。")
-            ai.start_cooldown()
-        elif decision == "manual":
-            return None
-    return random.randrange(len(options))
+    indices = _choose_indices(
+        {"text": question, "multi": False}, options, mode, ai, logger,
+        config=config, bridge=bridge, examine=examine,
+    )
+    if not indices:
+        return None
+    return indices[0]
 
 
 def _close_dialog(page: Page, logger: Logger) -> bool:
@@ -345,6 +398,8 @@ def handle_quiz(page: Page, config, logger: Logger, bridge: Bridge,
     handled = False
     stuck = 0
     last_signature = None
+    clicked_questions: set[str] = set()      # 这一轮已经点过的题（防反复选中/取消）
+    clicked_answers: set[tuple] = set()
 
     for _ in range(MAX_ROUNDS):
         bridge.check_stop()
@@ -387,7 +442,7 @@ def handle_quiz(page: Page, config, logger: Logger, bridge: Bridge,
             stuck = 0
             continue
 
-        # 1) 每道还没作答的题各点一个选项
+        # 1) 每道还没作答的题选好答案（多选题一次点多个）
         picked = 0
         to_manual = False
         for question in info["questions"]:
@@ -396,23 +451,33 @@ def handle_quiz(page: Page, config, logger: Logger, bridge: Bridge,
             options = question["options"]
             if not options:
                 continue
-            index = _choose_index(
-                question["text"], [o["text"] for o in options],
+            indices = _choose_indices(
+                question, [o["text"] for o in options],
                 mode, ai, logger, config=config, bridge=bridge, examine=examine,
             )
-            if index is None:
+            if indices is None:
                 # AI 不可用且用户选择了手动作答：把这一轮剩下的交给用户
                 to_manual = True
                 break
-            tag = options[index]["tag"] or ""
-            group_pos, option_pos = tag.split(":") if ":" in tag else ("0", "0")
-            if not _click_tag(page, "opt", tag):
+            signature = (question["text"][:60], tuple(indices))
+            if signature in clicked_answers:
+                # 同样的答案这一轮已经点过了：再点一次只会把选项取消掉，
+                # 页面上看起来在作答，其实永远完不成（翻转课的弹题就踩过这个坑）
+                clicked_questions.add(question["text"][:60])
                 continue
-            picked += 1
-            logger.info(
-                f"{label}第 {question['text'][:24]!r} 选择第 {index + 1} 个选项"
-                f"（{len(options)} 选 1）"
-            )
+            clicked_tags = 0
+            for index in indices:
+                if _click_tag(page, "opt", options[index]["tag"] or ""):
+                    clicked_tags += 1
+            if clicked_tags:
+                picked += clicked_tags
+                clicked_answers.add(signature)
+                clicked_questions.add(question["text"][:60])
+                logger.info(
+                    f"{label}第 {question['text'][:24]!r} 选择第 "
+                    f"{', '.join(str(i + 1) for i in indices)} 个选项"
+                    f"（{len(options)} 选 {len(indices)}）"
+                )
         if to_manual:
             # 关键：不能带着没答完的题去点提交
             mode = "manual"
@@ -450,7 +515,17 @@ def handle_quiz(page: Page, config, logger: Logger, bridge: Bridge,
             continue
 
         # 3) 没有提交按钮：可能是解析页，也可能是每选即判的旧结构
-        if info["hasAnswer"] or info["answeredCount"] == len(info["questions"]):
+        all_clicked = bool(info["questions"]) and all(
+            q["answered"] or q["text"][:60] in clicked_questions
+            for q in info["questions"]
+        )
+        if (
+            info["hasAnswer"]
+            or info["answeredCount"] == len(info["questions"])
+            or (picked and not info["submit"] and all_clicked)
+        ):
+            if picked and not info["submit"] and not info["hasAnswer"]:
+                logger.info(f"{label}这张弹题没有提交按钮，选完直接关掉它。")
             _close_dialog(page, logger)
             bridge.sleep(1.0)
             if not _scan(page):
