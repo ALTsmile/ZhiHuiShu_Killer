@@ -297,12 +297,18 @@ CHAPTER_ITEM_SELECTORS = (
     ".catalogue .item-test",
     ".category-wrapper .item-test",
     ".item-test",
+    # 「翻转课 / 公开课」（studyvideoh5 那种页面）目录里的章节测验：
+    # <li class="chapter-test"><span class="name">平时测试</span></li>
+    ".list .chapter-test",
+    ".chapter-test",
 )
 CHAPTER_ITEM_TITLE_SELECTORS = (
     ".item-test-left-name",
     ".itme-test-left",       # 站点自己的拼写错误，保留
     ".item-test-left span",
     ".item-test-left",
+    ".chapter-test .name",
+    ".name",
     ".name-box",
     ".child-name",
     "span[title]",

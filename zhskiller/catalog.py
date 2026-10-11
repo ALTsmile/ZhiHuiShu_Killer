@@ -406,6 +406,31 @@ def chapter_item_info(item: Locator) -> dict:
                             node = parent;
                             if (node === document.body) break;
                         }
+                        // 「翻转课 / 公开课」的目录：章节测验条目和章标题行
+                        // （li.chapter > .catalogue_title3）是同一层的兄弟节点，
+                        // 上面的通用找法认不出，这里单独找一遍。
+                        node = el;
+                        for (let i = 0; i < 5 && node; i++) {
+                            const parent = node.parentElement;
+                            if (!parent) break;
+                            let sib = node.previousElementSibling;
+                            while (sib) {
+                                const chapter = (sib.matches && sib.matches('li.chapter'))
+                                    ? sib
+                                    : (sib.querySelector ? sib.querySelector('li.chapter') : null);
+                                if (chapter) {
+                                    const title = chapter.querySelector(
+                                        '.catalogue_title3 b, .catalogue_title3, .catalogue_title');
+                                    if (title) {
+                                        const text = (title.innerText || title.textContent || '').trim();
+                                        if (text) return text;
+                                    }
+                                }
+                                sib = sib.previousElementSibling;
+                            }
+                            node = parent;
+                            if (node === document.body) break;
+                        }
                         return '';
                     }"""
                 )

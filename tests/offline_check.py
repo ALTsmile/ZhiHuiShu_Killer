@@ -1556,6 +1556,41 @@ def main() -> int:
             page.evaluate("() => window.__trusted") is True,
         )
 
+        print("35. 公开课/翻转课目录里的章节测验（.chapter-test）要能认出来")
+        page.set_content(
+            '<ul class="list">'
+            '<li class="clearfix chapter"><span class="catalogue_title3 fl" title="第一章">'
+            "<b>第一章</b></span><span class=\"catalogue_title fl\">材料的性能</span></li>"
+            '<div><ul><li class="clearfix video">1.1.1 视频</li></ul></div>'
+            '<li title="点击测试" class="chapter-test"><span class="name"> 平时测试 '
+            '<span><span class="iconfont iconbaizhoumoshi-zhangceshi-shubiaoyiru"></span>'
+            '</span></span><em class="Sectionmark-em"></em></li>'
+            "</ul>"
+            '<ul class="list">'
+            '<li class="clearfix chapter"><span class="catalogue_title3 fl" title="第二章">'
+            "<b>第二章</b></span><span class=\"catalogue_title fl\">结构材料</span></li>"
+            '<div><ul><li class="clearfix video">2.1.1 视频</li></ul></div>'
+            '<li title="点击测试" class="chapter-test"><span class="name"> 平时测试 '
+            '<span><span class="iconfont iconbaizhoumoshi-zhangceshi-shubiaoyiru"></span>'
+            '</span></span><em class="Sectionmark-em"></em></li>'
+            "</ul>"
+        )
+        topic_selector = catalog_mod.chapter_item_selector(page)
+        failures += not check(
+            "能找到 .chapter-test 条目",
+            topic_selector is not None and page.locator(topic_selector).count() == 2,
+        )
+        first = catalog_mod.chapter_item_info(page.locator(topic_selector).nth(0))
+        second = catalog_mod.chapter_item_info(page.locator(topic_selector).nth(1))
+        failures += not check(
+            "标题取到「平时测试」",
+            first["title"] == "平时测试" and second["title"] == "平时测试",
+        )
+        failures += not check(
+            "所属章节分别识别为第一章 / 第二章",
+            first.get("chapter") == "第一章" and second.get("chapter") == "第二章",
+        )
+
         browser.close()
     print()
     print("全部通过 ✅" if failures == 0 else f"有 {failures} 项失败 ❌")
