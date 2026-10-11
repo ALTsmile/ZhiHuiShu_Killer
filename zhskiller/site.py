@@ -301,6 +301,10 @@ CHAPTER_ITEM_SELECTORS = (
     # <li class="chapter-test"><span class="name">平时测试</span></li>
     ".list .chapter-test",
     ".chapter-test",
+    # 「融合共享课」（wisdom-mooc 那种页面）章节内容里的测试入口：
+    # <div class="test-box"><img><span>测试</span></div>
+    ".chapter-content .test-box",
+    ".test-box",
 )
 CHAPTER_ITEM_TITLE_SELECTORS = (
     ".item-test-left-name",

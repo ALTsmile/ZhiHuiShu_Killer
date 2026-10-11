@@ -1711,6 +1711,55 @@ def main() -> int:
                 and (mixed_root / "inner" / "keep.txt").is_file(),
             )
 
+        print("38. 融合共享课：章节测试 .test-box 的识别与折叠章节展开")
+        page.set_content(
+            '<div class="el-collapse"><div class="el-collapse-item">'
+            '<div class="el-collapse-item__header" role="button">'
+            '<span class="el-collapse-item__title"><div class="chapter-first">'
+            '<div class="left"><div class="chapter-title">第一章:</div>'
+            '<div class="chapter-name">病人入院和出院的护理</div></div></div></span></div>'
+            '<div class="el-collapse-item__wrap"><div class="el-collapse-item__content">'
+            '<div class="chapter-content"><div class="chapter-item">'
+            '<div class="item-box"><div class="item-num">1.1</div>'
+            '<div class="item-name">患者入院护理</div></div>'
+            '<div class="test-box"><img src="about:blank" alt="">'
+            "<span>测试</span></div>"
+            "</div></div></div></div></div></div>"
+        )
+        page.evaluate(
+            """() => {
+                window.__foldExpanded = 0;
+                document.querySelector('.el-collapse-item__header')
+                    .addEventListener('click', (event) => {
+                        window.__foldExpanded += 1;
+                        event.currentTarget.classList.add('is-active');
+                    });
+            }"""
+        )
+        fusion_selector = catalog_mod.chapter_item_selector(page)
+        failures += not check(
+            "能找到 .test-box 章节测试条目",
+            fusion_selector is not None
+            and page.locator(fusion_selector).count() == 1,
+        )
+        fusion_info = catalog_mod.chapter_item_info(
+            page.locator(fusion_selector).first
+        )
+        failures += not check(
+            "标题=「测试」、章节名取到第一章",
+            fusion_info["title"] == "测试"
+            and "第一章" in fusion_info.get("chapter", "")
+            and "病人入院和出院的护理" in fusion_info.get("chapter", ""),
+        )
+        failures += not check(
+            "章节是收起状态时会先展开它",
+            catalog_mod.expand_ancestor_fold(
+                page.locator(fusion_selector).first, _Logger()
+            )
+            is True
+            and page.evaluate("() => window.__foldExpanded") == 1,
+        )
+
         browser.close()
     print()
     print("全部通过 ✅" if failures == 0 else f"有 {failures} 项失败 ❌")

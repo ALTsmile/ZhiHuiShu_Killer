@@ -711,6 +711,8 @@ class Runner:
                         return True
             except Exception:
                 pass
+            # 折叠章节里的条目：先把那一章展开再判断可不可点
+            catalog_mod.expand_ancestor_fold(item, logger)
             catalog_mod.ensure_visible(page, catalog, logger)
             try:
                 page.wait_for_timeout(500)

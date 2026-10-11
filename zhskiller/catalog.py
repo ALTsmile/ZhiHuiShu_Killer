@@ -352,6 +352,33 @@ def click_lesson(page: Page, lesson: Locator, logger: Logger) -> bool:
         return False
 
 
+def expand_ancestor_fold(item: Locator, logger: Logger) -> bool:
+    """条目在收起的折叠章节里时，先把那一章展开。
+
+    「融合共享课」的目录是 el-collapse 折叠章节，课时和章节测试（.test-box）
+    都放在里面；某一章被收起时，里面的条目量不到尺寸、也点不到，
+    表现就是"点不开章节测试"。
+    """
+    try:
+        clicked = item.evaluate(
+            """(el) => {
+                const box = el.closest('.el-collapse-item');
+                if (!box) return false;
+                const header = box.querySelector('.el-collapse-item__header');
+                if (!header || header.classList.contains('is-active')) return false;
+                header.dispatchEvent(new MouseEvent('click', {
+                    bubbles: true, cancelable: true, view: window,
+                }));
+                return true;
+            }"""
+        )
+    except Exception:
+        clicked = False
+    if clicked:
+        logger.info("这一章是收起状态，先把它展开。")
+    return bool(clicked)
+
+
 def _click_point(page: Page, lesson: Locator) -> dict | None:
     """挑一个"点下去真能点到这个条目"的坐标。
 
@@ -444,6 +471,16 @@ def chapter_item_info(item: Locator) -> dict:
             (
                 item.evaluate(
                     """(el) => {
+                        // 「融合共享课」：测试入口在折叠章节里，章名在
+                        // .el-collapse-item__header 的 .chapter-title/.chapter-name
+                        const collapse = el.closest('.el-collapse-item');
+                        if (collapse) {
+                            const num = collapse.querySelector('.chapter-title');
+                            const name = collapse.querySelector('.chapter-name');
+                            const text = ((num ? num.innerText : '')
+                                + (name ? name.innerText : '')).trim();
+                            if (text) return text;
+                        }
                         const pick = (root) => {
                             if (!root || !root.querySelector) return '';
                             const node = root.querySelector('.category-title, .item-name, .course-nav-header');
