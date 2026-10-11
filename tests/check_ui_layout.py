@@ -7,6 +7,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# Windows 控制台默认 GBK，打印 ✅ 会抛 UnicodeEncodeError，这里统一改成 UTF-8
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from ui.app import App  # noqa: E402
 
 

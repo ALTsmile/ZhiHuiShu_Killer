@@ -16,6 +16,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# Windows 控制台默认是 GBK，直接打印 ✅/❌ 会抛 UnicodeEncodeError 把自检弄"失败"，
+# 这里统一把输出改成 UTF-8（改不了就算了，不影响测试本身）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 from zhskiller import captcha, catalog as catalog_mod, player, popups, quiz, site  # noqa: E402
