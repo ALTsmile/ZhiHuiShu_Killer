@@ -1591,6 +1591,57 @@ def main() -> int:
             first.get("chapter") == "第一章" and second.get("chapter") == "第二章",
         )
 
+        print("36. 点击条目不能点到浮层（回归：点到平台 AI 助教后卡住）")
+        page.set_content(
+            '<ul class="list"><li id="item" class="chapter-test" '
+            'style="width:400px;height:40px;background:#eee">'
+            '<span class="name">平时测试</span></li></ul>'
+            '<div id="ai-helper" style="position:absolute;left:150px;top:0;width:250px;'
+            'height:40px;background:rgba(0,0,0,.3)"></div>'
+        )
+        page.evaluate(
+            """() => {
+                window.__itemClicks = 0;
+                window.__aiClicks = 0;
+                document.querySelector('#item')
+                    .addEventListener('click', () => { window.__itemClicks += 1; });
+                document.querySelector('#ai-helper')
+                    .addEventListener('click', () => { window.__aiClicks += 1; });
+            }"""
+        )
+        catalog_mod.click_lesson(page, page.locator("#item"), _Logger())
+        failures += not check(
+            "中间被浮层盖住时，点在条目（标题）上而不是浮层上",
+            page.evaluate("() => window.__itemClicks") == 1
+            and page.evaluate("() => window.__aiClicks") == 0,
+        )
+
+        # 整个条目都被盖住：退回派发事件，也必须能点到它
+        page.set_content(
+            '<ul class="list"><li id="item" class="chapter-test" '
+            'style="width:400px;height:40px;background:#eee">'
+            '<span class="name">平时测试</span></li></ul>'
+            '<div id="ai-helper" style="position:absolute;left:0;top:0;width:400px;'
+            'height:40px;background:rgba(0,0,0,.3)"></div>'
+        )
+        page.evaluate(
+            """() => {
+                window.__itemClicks = 0;
+                window.__aiClicks = 0;
+                document.querySelector('#item')
+                    .addEventListener('click', () => { window.__itemClicks += 1; });
+                document.querySelector('#ai-helper')
+                    .addEventListener('click', () => { window.__aiClicks += 1; });
+            }"""
+        )
+        clicked = catalog_mod.click_lesson(page, page.locator("#item"), _Logger())
+        failures += not check(
+            "整条被盖住时退回派发事件，也能点到条目",
+            clicked is True
+            and page.evaluate("() => window.__itemClicks") == 1
+            and page.evaluate("() => window.__aiClicks") == 0,
+        )
+
         browser.close()
     print()
     print("全部通过 ✅" if failures == 0 else f"有 {failures} 项失败 ❌")

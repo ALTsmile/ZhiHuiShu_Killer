@@ -292,6 +292,11 @@ def click_lesson(page: Page, lesson: Locator, logger: Logger) -> bool:
     "element is outside of the viewport"（实测会连等 10 秒再重试，
     表现就是切课时卡顿）。这里先把元素在各级滚动容器里滚到中间，
     再用真实鼠标点；实在不行就退回直接派发 click 事件。
+
+    另外实测：页面上浮着「AI 助教」小球之类的元素时，直接点条目的**正中间**
+    会点到那个浮层（程序就卡住了）。所以这里先让页面自己挑一个"点得到条目"的
+    落点：优先点条目里的标题文字（.name / .catalogue_title …），并且每个候选
+    落点都用 elementFromPoint 确认最上层就是条目或它的子节点。
     """
     try:
         lesson.evaluate(
@@ -315,26 +320,79 @@ def click_lesson(page: Page, lesson: Locator, logger: Logger) -> bool:
         pass
     page.wait_for_timeout(300)
 
-    try:
-        box = lesson.bounding_box()
-        if box and box.get("width") and box.get("height"):
-            page.mouse.click(
-                box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
-            )
+    point = _click_point(page, lesson)
+    if point and point.get("x"):
+        try:
+            page.mouse.click(float(point["x"]), float(point["y"]))
             return True
-    except Exception as exc:
-        logger.debug(f"鼠标点击课时失败：{exc}")
+        except Exception as exc:
+            logger.debug(f"鼠标点击课时失败：{exc}")
+    elif point and point.get("blocked"):
+        logger.debug(f"条目被 {point['blocked']} 盖住了，改用派发事件点击。")
 
+    # 兜底：条目被浮层整个盖住时，直接往上派发 click（站点把事件绑在元素自己身上）
     try:
-        lesson.evaluate(
-            """(el) => el.dispatchEvent(new MouseEvent('click', {
-                bubbles: true, cancelable: true, view: window,
-            }))"""
+        return bool(
+            lesson.evaluate(
+                """(el) => {
+                    // 只派发一次：点在里层文字上，事件会冒泡到条目本身，
+                    // 里层/外层的监听都能触发；派发两次会把条目点两下。
+                    const target = el.querySelector(
+                        ".name, .child-name, .item-test-left-name, .catalogue_title,"
+                        + " .item-name, .title") || el;
+                    target.dispatchEvent(new MouseEvent('click', {
+                        bubbles: true, cancelable: true, view: window,
+                    }));
+                    return true;
+                }"""
+            )
         )
-        return True
     except Exception as exc:
         logger.debug(f"派发点击课时失败：{exc}")
         return False
+
+
+def _click_point(page: Page, lesson: Locator) -> dict | None:
+    """挑一个"点下去真能点到这个条目"的坐标。
+
+    页面右侧偶尔浮着平台的 AI 助教小球、客服气泡之类的东西，
+    点条目正中间就会点到它们（然后程序就一直卡在那里）。
+    这里由页面自己算：优先条目的标题文字，其次条目本身；
+    每个候选点都用 elementFromPoint 验证最上层元素就在这个条目里。
+    全部被盖住时返回 {"blocked": 遮挡元素的类名}，交给调用方兜底。
+    """
+    try:
+        return lesson.evaluate(
+            """(el) => {
+                const inner = el.querySelector(
+                    ".name, .child-name, .item-test-left-name, .catalogue_title,"
+                    + " .item-name, .title");
+                const targets = inner ? [inner, el] : [el];
+                const fractions = [[0.5, 0.5], [0.25, 0.5], [0.75, 0.5],
+                                   [0.12, 0.5], [0.5, 0.3], [0.5, 0.7]];
+                for (const node of targets) {
+                    const box = node.getBoundingClientRect();
+                    if (box.width < 2 || box.height < 2) continue;
+                    for (const [fx, fy] of fractions) {
+                        const x = box.left + box.width * fx;
+                        const y = box.top + box.height * fy;
+                        if (x < 1 || y < 1 || x > innerWidth - 1 || y > innerHeight - 1) {
+                            continue;
+                        }
+                        const top = document.elementFromPoint(x, y);
+                        if (top && (top === node || node.contains(top))) {
+                            return {x: x, y: y};
+                        }
+                    }
+                }
+                const box = el.getBoundingClientRect();
+                const top = document.elementFromPoint(
+                    box.left + box.width / 2, box.top + box.height / 2);
+                return {blocked: top ? (top.className || top.tagName) : '未知'};
+            }"""
+        )
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
