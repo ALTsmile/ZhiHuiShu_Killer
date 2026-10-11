@@ -113,6 +113,38 @@ def main() -> int:
         failures += not check("点「打开项目主页」会回调", opened["repo"] == 1)
         about._on_close()
         app.update()
+
+        print("6. 「关于」是菜单栏里独立的一栏（不在「工具」里）")
+
+        def menu_labels(menu) -> list[str]:
+            """菜单里各栏的文字（分隔符、撕下栏之类没有文字的就跳过）。"""
+            texts = []
+            for index in range(int(menu.index("end")) + 1):
+                try:
+                    texts.append(str(menu.entrycget(index, "label")))
+                except tk.TclError:
+                    continue
+            return texts
+
+        menubar = app.menubar
+        labels = menu_labels(menubar)
+        failures += not check(
+            f"菜单栏有「工具」和「关于」两栏（实际 {labels}）",
+            labels[:2] == ["工具", "关于"],
+        )
+        tool_menu = app.nametowidget(menubar.entrycget(labels.index("工具"), "menu"))
+        tool_labels = menu_labels(tool_menu)
+        failures += not check(
+            "「工具」里已经没有任何「关于」相关项",
+            not any("关于" in str(text) for text in tool_labels),
+        )
+        about_labels = menu_labels(app.about_menu)
+        failures += not check(
+            f"「关于」里有 关于本程序 / 检查更新 / 打开 GitHub 项目主页（实际 {about_labels}）",
+            "关于本程序" in about_labels
+            and "检查更新" in about_labels
+            and any("GitHub" in str(text) for text in about_labels),
+        )
     finally:
         app.destroy()
     print()

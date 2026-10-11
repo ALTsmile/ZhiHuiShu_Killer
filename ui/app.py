@@ -122,7 +122,8 @@ class App(tk.Tk):
     # 界面搭建
     # ------------------------------------------------------------------
     def _build_menu(self) -> None:
-        menubar = tk.Menu(self)
+        menubar = tk.Menu(self, tearoff=0)
+        self.menubar = menubar
         data_menu = tk.Menu(menubar, tearoff=0)
         data_menu.add_command(label="打开数据目录", command=lambda: self._open_path(paths.data_dir()))
         data_menu.add_command(label="打开日志目录", command=lambda: self._open_path(paths.logs_dir()))
@@ -130,10 +131,20 @@ class App(tk.Tk):
         data_menu.add_command(label="删除已保存的账号密码", command=self._forget_credentials)
         data_menu.add_command(label="重置登录状态（下次运行需重新登录）",
                               command=self._reset_login)
-        data_menu.add_separator()
-        data_menu.add_command(label="关于 / 检查更新…", command=self._show_about)
         data_menu.add_command(label="退出", command=self._on_close)
+        data_menu.insert_separator("退出")
         menubar.add_cascade(label="工具", menu=data_menu)
+
+        # 「关于」单独占菜单栏一栏，不放在「工具」里面
+        about_menu = tk.Menu(menubar, tearoff=0)
+        self.about_menu = about_menu
+        about_menu.add_command(label="关于本程序", command=self._show_about)
+        about_menu.add_command(
+            label="检查更新", command=lambda: self._show_about(check_now=True)
+        )
+        about_menu.add_separator()
+        about_menu.add_command(label="打开 GitHub 项目主页", command=self._open_repo_page)
+        menubar.add_cascade(label="关于", menu=about_menu)
         self.configure(menu=menubar)
 
     def _build_layout(self) -> None:
@@ -876,7 +887,7 @@ class App(tk.Tk):
     # ------------------------------------------------------------------
     # 关于 / 检查更新
     # ------------------------------------------------------------------
-    def _show_about(self) -> None:
+    def _show_about(self, check_now: bool = False) -> None:
         from zhskiller import updater
 
         from .dialogs import AboutDialog
@@ -889,6 +900,8 @@ class App(tk.Tk):
         )
         self._about_dialog = dialog
         dialog.show_async()
+        if check_now:
+            self._about_check(dialog)
 
     def _about_dialog_live(self):
         """还活着的「关于」窗口（关掉之后后台线程回来时要用它，别往已销毁的窗口写）。"""
