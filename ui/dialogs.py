@@ -33,7 +33,7 @@ class _Modal(tk.Toplevel):
         self.result = None
         self.destroy()
 
-    def show(self):
+    def _prepare_window(self) -> None:
         # 顺序很重要：必须先让窗口真正映射出来，否则 grab_set 会抛
         # "grab failed: window not viewable"，异常一旦冒泡到 tkinter 的
         # after 回调就会把消息泵整条链打断，表现为界面卡死。
@@ -63,8 +63,20 @@ class _Modal(tk.Toplevel):
             self.bell()
         except tk.TclError:
             pass
+
+    def show(self):
+        self._prepare_window()
         self.wait_window()
         return self.result
+
+    def show_async(self) -> None:
+        """摆好窗口但不阻塞。
+
+        「关于 / 检查更新」需要在窗口开着的时候由后台线程回报结果
+        （走消息队列回到界面），所以不能卡在 wait_window 上。
+        """
+        self._prepare_window()
+        return None
 
 
 class Notice(tk.Toplevel):
@@ -258,6 +270,101 @@ class NotifyDialog(_Modal):
     def _cancel(self) -> None:
         self.result = self._cancel_value
         self.destroy()
+
+
+class AboutDialog(_Modal):
+    """关于：显示版本、项目主页，并检查 / 执行更新。
+
+    真正干活（联网、下载、覆盖文件）由调用方通过回调传入，这里只管界面。
+    """
+
+    def __init__(self, master, version: str, repo_url: str,
+                 on_open_repo, on_check, on_update):
+        super().__init__(master, "关于 智慧树杀手")
+        self._on_open_repo = on_open_repo
+        self._on_check = on_check
+        self._on_update = on_update
+        self._info = None
+        self.resizable(True, True)
+        self.minsize(560, 320)
+
+        body = ttk.Frame(self, padding=16)
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(4, weight=1)
+
+        ttk.Label(
+            body, text=f"智慧树杀手 ZhiHuiShu_Killer  v{version}",
+            style="SectionA.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            body,
+            text="自动看课 / 随堂练习 / 章节测验的桌面小工具。",
+            style="Hint.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(2, 10))
+
+        self.status_var = tk.StringVar(value="")
+        ttk.Label(body, textvariable=self.status_var).grid(
+            row=2, column=0, sticky="w", pady=(0, 6)
+        )
+
+        buttons = ttk.Frame(body)
+        buttons.grid(row=3, column=0, sticky="ew")
+        ttk.Button(buttons, text="打开 GitHub 项目主页",
+                   command=self._open_repo).pack(side="left")
+        self.check_button = ttk.Button(buttons, text="检查更新",
+                                       command=self._check)
+        self.check_button.pack(side="left", padx=8)
+        self.update_button = ttk.Button(buttons, text="立即更新",
+                                        command=self._update, state="disabled")
+        self.update_button.pack(side="left")
+        ttk.Button(buttons, text="关闭", command=self._on_close).pack(side="right")
+
+        self.notes = tk.Text(
+            body, height=12, wrap="word", relief="flat", borderwidth=1,
+            font=("Consolas", 9), padx=8, pady=6, state="disabled",
+        )
+        self.notes.grid(row=4, column=0, sticky="nsew", pady=(10, 0))
+        self.notes.configure(background="#fafafa")
+
+    # ---------- 给调用方用的小接口 ----------
+    def set_status(self, text: str) -> None:
+        self.status_var.set(text)
+
+    def set_busy(self, busy: bool) -> None:
+        state = "disabled" if busy else "normal"
+        try:
+            self.check_button.configure(state=state)
+        except tk.TclError:
+            pass
+        if busy:
+            self.update_button.configure(state="disabled")
+
+    def show_notes(self, text: str) -> None:
+        self.notes.configure(state="normal")
+        self.notes.delete("1.0", "end")
+        self.notes.insert("1.0", text or "（这次发布没有写更新说明）")
+        self.notes.configure(state="disabled")
+
+    def offer_update(self, info) -> None:
+        """有新版本：列出更新日志并亮出「立即更新」。"""
+        self._info = info
+        self.set_status(f"发现新版本 {info.tag}（当前不是最新），下面是更新日志：")
+        self.show_notes(info.notes)
+        self.update_button.configure(
+            text=f"立即更新到 {info.tag}", state="normal"
+        )
+
+    # ---------- 按钮 ----------
+    def _open_repo(self) -> None:
+        self._on_open_repo()
+
+    def _check(self) -> None:
+        self._on_check(self)
+
+    def _update(self) -> None:
+        if self._info is not None:
+            self._on_update(self, self._info)
 
 
 def build_dialog(master, kind: str, payload: dict):

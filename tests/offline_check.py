@@ -1642,6 +1642,75 @@ def main() -> int:
             and page.evaluate("() => window.__aiClicks") == 0,
         )
 
+        print("37. 检查更新：版本比较与发布包覆盖（不联网，用假 zip）")
+        import tempfile as tempfile_mod
+        import zipfile
+
+        from zhskiller import updater
+
+        failures += not check(
+            "版本号解析：v1.2.3 -> (1, 2, 3)",
+            updater.parse_version("v1.2.3") == (1, 2, 3),
+        )
+        failures += not check(
+            "1.0.10 比 1.0.9 新（按数字段比，不是按字符串）",
+            updater.is_newer("1.0.10", "1.0.9") is True
+            and updater.is_newer("1.0.9", "1.0.10") is False,
+        )
+        failures += not check(
+            "同版本 / 更旧版本不算有更新",
+            updater.is_newer("1.0.2", "1.0.2") is False
+            and updater.is_newer("1.0.1", "1.0.2") is False,
+        )
+        failures += not check(
+            "带后缀的版本号也能比（1.0.3-beta > 1.0.2）",
+            updater.is_newer("v1.0.3-beta", "1.0.2") is True,
+        )
+
+        with tempfile_mod.TemporaryDirectory() as tmp:
+            program = Path(tmp) / "program"
+            (program / "zhskiller").mkdir(parents=True)
+            (program / "data").mkdir(parents=True)
+            (program / "old.txt").write_text("old", encoding="utf-8")
+            (program / "data" / "config.json").write_text("KEEP", encoding="utf-8")
+            fake_zip = Path(tmp) / "release.zip"
+            with zipfile.ZipFile(fake_zip, "w") as archive:
+                root = "智慧树杀手_ZhiHuiShu_Killer/"
+                archive.writestr(root + "main.py", "print('new')\n")
+                archive.writestr(root + "zhskiller/ai.py", "# new ai\n")
+                archive.writestr(root + "run.bat", "rem new\n")
+            written = updater.apply_zip(fake_zip, program)
+            failures += not check(
+                "发布包里的程序文件被覆盖到程序目录",
+                written == 3
+                and (program / "main.py").read_text(encoding="utf-8") == "print('new')\n"
+                and (program / "zhskiller" / "ai.py").read_text(encoding="utf-8")
+                == "# new ai\n"
+                and (program / "run.bat").exists(),
+            )
+            failures += not check(
+                "data/ 里的账号、配置、日志一点没动",
+                (program / "data" / "config.json").read_text(encoding="utf-8")
+                == "KEEP",
+            )
+            failures += not check(
+                "包外的老文件不会被删（只覆盖，不清空目录）",
+                (program / "old.txt").read_text(encoding="utf-8") == "old",
+            )
+            # 顶层还有散文件时不剥壳，避免把文件挪错地方
+            mixed_zip = Path(tmp) / "mixed.zip"
+            with zipfile.ZipFile(mixed_zip, "w") as archive:
+                archive.writestr("readme.txt", "hi\n")
+                archive.writestr("inner/keep.txt", "inner\n")
+            mixed_root = Path(tmp) / "mixed"
+            mixed_root.mkdir()
+            updater.apply_zip(mixed_zip, mixed_root)
+            failures += not check(
+                "顶层有散文件时保持原目录结构",
+                (mixed_root / "readme.txt").is_file()
+                and (mixed_root / "inner" / "keep.txt").is_file(),
+            )
+
         browser.close()
     print()
     print("全部通过 ✅" if failures == 0 else f"有 {failures} 项失败 ❌")

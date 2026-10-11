@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import os
 import queue
+import subprocess
+import sys
+import tempfile
 import threading
 import tkinter as tk
 import traceback
+import webbrowser
+from pathlib import Path
 from tkinter import font as tkfont
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
@@ -126,6 +131,7 @@ class App(tk.Tk):
         data_menu.add_command(label="重置登录状态（下次运行需重新登录）",
                               command=self._reset_login)
         data_menu.add_separator()
+        data_menu.add_command(label="关于 / 检查更新…", command=self._show_about)
         data_menu.add_command(label="退出", command=self._on_close)
         menubar.add_cascade(label="工具", menu=data_menu)
         self.configure(menu=menubar)
@@ -867,6 +873,140 @@ class App(tk.Tk):
         except Exception as exc:
             messagebox.showerror("打开失败", str(exc), parent=self)
 
+    # ------------------------------------------------------------------
+    # 关于 / 检查更新
+    # ------------------------------------------------------------------
+    def _show_about(self) -> None:
+        from zhskiller import updater
+
+        from .dialogs import AboutDialog
+
+        dialog = AboutDialog(
+            self, __version__, updater.REPO_URL,
+            on_open_repo=self._open_repo_page,
+            on_check=self._about_check,
+            on_update=self._about_update,
+        )
+        self._about_dialog = dialog
+        dialog.show_async()
+
+    def _about_dialog_live(self):
+        """还活着的「关于」窗口（关掉之后后台线程回来时要用它，别往已销毁的窗口写）。"""
+        dialog = getattr(self, "_about_dialog", None)
+        try:
+            if dialog is not None and dialog.winfo_exists():
+                return dialog
+        except tk.TclError:
+            pass
+        return None
+
+    def _open_repo_page(self) -> None:
+        from zhskiller import updater
+
+        try:
+            webbrowser.open(updater.REPO_URL)
+        except Exception as exc:
+            messagebox.showerror("打开失败", str(exc), parent=self)
+
+    def _about_check(self, dialog) -> None:
+        from zhskiller import updater
+
+        dialog.set_busy(True)
+        dialog.set_status("正在检查更新…")
+        dialog.show_notes("")
+
+        def worker() -> None:
+            try:
+                info = updater.check(__version__)
+            except Exception as exc:
+                self.queue.put(("about_check", None, f"检查更新失败：{exc}"))
+                return
+            self.queue.put(("about_check", info, ""))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _about_update(self, dialog, info) -> None:
+        from zhskiller import updater
+
+        if self.worker is not None:
+            dialog.set_status("程序正在运行，请先点「停止」再更新。")
+            return
+        if not info.asset_url:
+            dialog.set_status("这个版本没有可下载的发布包，请到 GitHub 页面手动下载。")
+            return
+        dialog.set_busy(True)
+        dialog.set_status(f"正在下载 {info.asset_name or '发布包'}…")
+
+        def worker() -> None:
+            try:
+                temp_dir = Path(tempfile.mkdtemp(prefix="zhs_update_"))
+                zip_path = temp_dir / (info.asset_name or "update.zip")
+                updater.download(
+                    info.asset_url, zip_path,
+                    progress=lambda done, total: self.queue.put(
+                        ("about_progress", done, total)
+                    ),
+                )
+                written = updater.apply_zip(zip_path, paths.app_root())
+            except Exception as exc:
+                self.queue.put(("about_updated", False, f"更新失败：{exc}"))
+                return
+            self.queue.put(("about_updated", True, f"已更新 {written} 个文件。"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_about_check(self, info, error: str) -> None:
+        dialog = self._about_dialog_live()
+        if dialog is None:
+            return
+        dialog.set_busy(False)
+        if error:
+            dialog.set_status(f"{error}（也可以点上面的按钮到 GitHub 手动下载）")
+            return
+        if info is None:
+            dialog.set_status(f"已经是最新版本 v{__version__}，不用更新。")
+            return
+        dialog.offer_update(info)
+
+    def _on_about_progress(self, done: int, total: int) -> None:
+        dialog = self._about_dialog_live()
+        if dialog is None:
+            return
+        if total:
+            dialog.set_status(
+                f"正在下载… {done * 100 // max(total, 1)}%"
+                f"（{done // 1024} KB / {total // 1024} KB）"
+            )
+        else:
+            dialog.set_status(f"正在下载… 已收到 {done // 1024} KB")
+
+    def _on_about_updated(self, ok: bool, message: str) -> None:
+        dialog = self._about_dialog_live()
+        if dialog is not None:
+            dialog.set_busy(False)
+            dialog.set_status(message)
+        if not ok:
+            if dialog is None:
+                messagebox.showerror("更新失败", message, parent=self)
+            return
+        if messagebox.askyesno(
+            "更新完成", f"{message}\n\n要现在重启程序吗？", parent=self
+        ):
+            self._restart_app()
+
+    def _restart_app(self) -> None:
+        try:
+            subprocess.Popen(
+                [sys.executable, str(paths.app_root() / "main.py")],
+                cwd=str(paths.app_root()),
+            )
+        except Exception as exc:
+            messagebox.showerror(
+                "重启失败", f"{exc}\n\n请手动关掉程序再重新打开。", parent=self
+            )
+            return
+        self.destroy()
+
     def _save_credentials(self) -> None:
         username = self.username_entry.get().strip()
         password = self.password_entry.get()
@@ -1031,6 +1171,12 @@ class App(tk.Tk):
             self._show_ask(message[1], message[2], message[3])
         elif kind == "dismiss":
             self._dismiss_notice(message[1])
+        elif kind == "about_check":
+            self._on_about_check(message[1], message[2])
+        elif kind == "about_progress":
+            self._on_about_progress(message[1], message[2])
+        elif kind == "about_updated":
+            self._on_about_updated(message[1], message[2])
 
     def _show_ask(self, request_id: int, kind: str, payload: dict) -> None:
         if kind in NOTICE_KINDS:

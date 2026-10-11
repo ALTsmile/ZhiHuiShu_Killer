@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import tkinter as tk  # noqa: E402
 
 from ui.app import App  # noqa: E402
-from ui.dialogs import FirstRunDialog, NotifyDialog  # noqa: E402
+from ui.dialogs import AboutDialog, FirstRunDialog, NotifyDialog  # noqa: E402
 
 
 def check(name: str, condition: bool) -> bool:
@@ -78,6 +78,41 @@ def main() -> int:
             failures += not check(
                 "日志内容包含标识", "自测异常" in ui_log.read_text(encoding="utf-8")
             )
+
+        print("5. 「关于 / 检查更新」弹窗：不阻塞、能显示更新日志、能亮出更新按钮")
+        from zhskiller import updater
+
+        opened = {"repo": 0}
+        about = AboutDialog(
+            app, "1.0.2", updater.REPO_URL,
+            on_open_repo=lambda: opened.__setitem__("repo", opened["repo"] + 1),
+            on_check=lambda _d: None,
+            on_update=lambda _d, _i: None,
+        )
+        about.show_async()          # 不能阻塞，否则后台线程的结果回不来
+        app.update()
+        failures += not check("窗口没被销毁", about.winfo_exists() == 1)
+        failures += not check(
+            "版本号写在界面上（1.0.2）",
+            "1.0.2" in about.winfo_children()[0].winfo_children()[0].cget("text"),
+        )
+        info = updater.UpdateInfo(version="1.0.3", tag="v1.0.3",
+                                  notes="修复了 XXX\n新增了 YYY")
+        about.offer_update(info)
+        app.update()
+        failures += not check(
+            "更新日志显示出来了",
+            "修复了 XXX" in about.notes.get("1.0", "end"),
+        )
+        failures += not check(
+            "更新按钮亮起且写明目标版本",
+            str(about.update_button.cget("state")) == "normal"
+            and "1.0.3" in str(about.update_button.cget("text")),
+        )
+        about._open_repo()
+        failures += not check("点「打开项目主页」会回调", opened["repo"] == 1)
+        about._on_close()
+        app.update()
     finally:
         app.destroy()
     print()
