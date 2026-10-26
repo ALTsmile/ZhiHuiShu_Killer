@@ -184,8 +184,23 @@ def read_pending(page: Page, logger: Logger) -> list[dict]:
 
 
 def _is_exam_url(url: str) -> bool:
+    """是否已经离开列表，进入某份试卷。
+
+    `stuExamWeb.html` 同时承载列表页和答题页。以前只看域名会把
+    `#/webExamList?...` 列表页误判成答题页，点击后立刻拿列表内容去答题，
+    随后的返回操作又取消了正常的开考跳转。
+    """
     text = (url or "").lower()
-    return "dohomework" in text or "stuexamweb" in text or "/exam" in text
+    marker = "#/webexamlist"
+    if marker in text:
+        route = text.split(marker, 1)[1].split("?", 1)[0].strip("/")
+        return bool(route)
+    return "dohomework" in text or "checkhomework" in text or "/exam" in text
+
+
+def is_answer_url(url: str) -> bool:
+    """公开入口：URL 是否指向具体试卷，而不是作业考试列表。"""
+    return _is_exam_url(url)
 
 
 def start_item(page: Page, item: dict, logger: Logger, bridge: Bridge,
@@ -197,14 +212,34 @@ def start_item(page: Page, item: dict, logger: Logger, bridge: Bridge,
         before = 1
     try:
         button = page.locator(f"[data-zhs-start='{item['index']}']").first
-        box = button.bounding_box() if button.count() else None
-        if not box:
+        if not button.count():
             return None
-        page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        # 列表页把真正的 click 监听绑在内层 span.themeBg 上。优先用
+        # Playwright 的真实鼠标点击，并滚动到可操作区域；旧方式只按坐标点，
+        # 某些缩放/浮层状态下会把事件点空。
+        inner = button.locator("span.themeBg").first
+        target = inner if inner.count() else button
+        try:
+            target.scroll_into_view_if_needed(timeout=5000)
+            target.click(timeout=8000, no_wait_after=True)
+        except Exception as exc:
+            logger.debug(f"标准点击「开始答题」失败，改按坐标点击：{exc}")
+            box = target.bounding_box() or button.bounding_box()
+            if not box:
+                return None
+            page.mouse.click(
+                box["x"] + box["width"] / 2,
+                box["y"] + box["height"] / 2,
+            )
+        # 给 Vue 的点击处理与 hash 路由一次渲染机会。生产环境里 bridge.sleep
+        # 是 Python 侧等待，不一定会推动页面任务队列提交路由。
+        page.wait_for_timeout(350)
     except Exception as exc:
         logger.debug(f"点「开始答题」失败：{exc}")
         return None
     deadline = time.time() + timeout
+    fallback_at = time.time() + min(15.0, max(8.0, timeout * 0.6))
+    fallback_done = False
     while time.time() < deadline:
         bridge.check_stop()
         try:
@@ -220,6 +255,14 @@ def start_item(page: Page, item: dict, logger: Logger, bridge: Bridge,
                 return page
         except Exception:
             pass
+        if not fallback_done and time.time() >= fallback_at:
+            fallback_done = True
+            logger.debug("真实鼠标点击后仍未开考，尝试原生元素点击一次。")
+            try:
+                page.bring_to_front()
+                button.locator("span.themeBg").first.evaluate("el => el.click()")
+            except Exception as exc:
+                logger.debug(f"开考按钮兜底点击失败：{exc}")
         bridge.sleep(0.7)
     return None
 

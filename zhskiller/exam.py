@@ -20,7 +20,7 @@ import time
 from playwright.sync_api import Page
 
 from . import ai as ai_mod
-from . import captcha, popups, site
+from . import captcha, examlist, popups, site
 from .ai import AiClient
 from .bridge import Bridge
 from .logger import Logger
@@ -44,15 +44,26 @@ def read_answer_card(page: Page) -> dict:
                 const clean = (t) => (t || "").split(/\\s+/).join(" ").trim();
                 const rateNode = document.querySelector(rateSel);
                 const items = Array.from(document.querySelectorAll(itemSel));
+                const rateText = rateNode
+                    ? clean(rateNode.innerText).replace('%', '')
+                    : '';
+                const rate = Number.parseFloat(rateText);
                 return {
-                    rate: rateNode ? clean(rateNode.innerText).replace('%', '') : '',
+                    rate: rateText,
                     items: items.map((li, i) => {
                         const cls = (li.className || '').toString().toLowerCase();
+                        const classList = cls.split(/\\s+/);
+                        const hintedDone = hints.some(h => classList.includes(h));
+                        // 新版作业页即使 0% 也会给题号加 green（绿色只是默认主题色）。
+                        // 完成率是平台自己算的总结果，0% / 100% 时以它为准。
+                        const done = Number.isFinite(rate)
+                            ? (rate <= 0 ? false : (rate >= 100 ? true : hintedDone))
+                            : hintedDone;
                         return {
                             pos: i,
                             label: clean(li.innerText),
                             cls,
-                            done: hints.some(h => cls.includes(h)),
+                            done,
                         };
                     }),
                 };
@@ -109,15 +120,9 @@ def jump_to_question(page: Page, pos: int) -> bool:
         node = page.locator(site.EXAM_CARD_ITEM).nth(pos)
         if node.count() == 0:
             return False
-        node.scroll_into_view_if_needed(timeout=2000)
-        node.evaluate(
-            """(el) => el.dispatchEvent(new MouseEvent('click', {
-                bubbles: true, cancelable: true, view: window,
-            }))"""
-        )
-        return True
     except Exception:
         return False
+    return _real_mouse_click(page, node, timeout=3000)
 
 
 def is_exam_page(page: Page) -> bool:
@@ -418,29 +423,43 @@ def click_option(page: Page, question_index: int, option_index: int) -> bool:
     try:
         node = page.locator(site.EXAM_QUESTION).nth(question_index)
         option = node.locator(site.EXAM_OPTION).nth(option_index)
-        option.scroll_into_view_if_needed(timeout=3000)
+    except Exception:
+        return False
+    return _real_mouse_click(page, option, timeout=4000)
+
+
+def _real_mouse_click(page: Page, node, timeout: float = 4000) -> bool:
+    """用 Playwright 的真实鼠标事件点击，避免站点忽略脚本合成事件。"""
+    try:
+        node.scroll_into_view_if_needed(timeout=min(timeout, 3000))
     except Exception:
         pass
     try:
-        node = page.locator(site.EXAM_QUESTION).nth(question_index)
-        option = node.locator(site.EXAM_OPTION).nth(option_index)
-        option.evaluate(
-            """(el) => el.dispatchEvent(new MouseEvent('click', {
-                bubbles: true, cancelable: true, view: window,
-            }))"""
-        )
+        node.click(timeout=timeout)
         return True
     except Exception:
-        return False
+        pass
+    try:
+        box = node.bounding_box()
+        if box and box.get("width", 0) > 1 and box.get("height", 0) > 1:
+            page.mouse.click(
+                box["x"] + box["width"] / 2,
+                box["y"] + box["height"] / 2,
+            )
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _click_button_by_text(page: Page, texts, logger: Logger) -> bool:
     """按文案点按钮（用于「下一题」「提交作业」）。"""
     try:
-        clicked = page.evaluate(
+        index = page.evaluate(
             """(texts) => {
                 const nodes = Array.from(document.querySelectorAll('button, .el-button'));
-                for (const node of nodes) {
+                for (let index = 0; index < nodes.length; index += 1) {
+                    const node = nodes[index];
                     const style = getComputedStyle(node);
                     const rect = node.getBoundingClientRect();
                     if (style.display === 'none' || style.visibility === 'hidden') continue;
@@ -448,19 +467,19 @@ def _click_button_by_text(page: Page, texts, logger: Logger) -> bool:
                     if (node.disabled) continue;
                     const text = (node.innerText || '').trim();
                     if (texts.some(t => text.includes(t))) {
-                        node.dispatchEvent(new MouseEvent('click', {
-                            bubbles: true, cancelable: true, view: window,
-                        }));
-                        return text;
+                        return index;
                     }
                 }
-                return null;
+                return -1;
             }""",
             list(texts),
         )
-        if clicked:
-            logger.debug(f"已点击按钮：{clicked}")
-            return True
+        if isinstance(index, int) and index >= 0:
+            node = page.locator("button, .el-button").nth(index)
+            label = node.inner_text(timeout=1000).strip()
+            if _real_mouse_click(page, node, timeout=4000):
+                logger.debug(f"已点击按钮：{label}")
+                return True
     except Exception as exc:
         logger.debug(f"按文案点按钮失败：{exc}")
     return False
@@ -520,10 +539,16 @@ def handle_exam_page(page: Page, config, logger: Logger, bridge: Bridge,
     review=True 时会**逐题复查并重选**（先清掉原有选择再选），
     用于"答题进度 100% 但还没提交"或"做到一半"的测验。
     """
+    # 从作业考试列表进入时，URL 会先变成具体试卷路由，Vue 单页应用随后才
+    # 异步把内容挂到 #app。这里必须先等试卷渲染，不能拿空壳页面判断“不是试卷”。
+    waited = False
+    if examlist.is_answer_url(page.url):
+        wait_ready(page, logger, bridge, timeout=30, config=config)
+        waited = True
     if not is_exam_page(page):
         return ""
-
-    wait_ready(page, logger, bridge, timeout=30, config=config)
+    if not waited:
+        wait_ready(page, logger, bridge, timeout=30, config=config)
     if is_submitted_exam(page):
         logger.info(
             "这份试卷已经提交 / 批阅过了（每题都有得分、页面没有提交按钮），直接跳过。"

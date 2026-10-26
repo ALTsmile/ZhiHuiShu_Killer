@@ -48,7 +48,8 @@ DEFAULTS: dict[str, Any] = {
         "max_minutes_per_course": 0,
         # 每门课程本次至少要学够多久（分钟），0 = 不用。
         # 用于刷平台的"规律学习"评分：学够之后才换下一门课，
-        # 视频都看完了会重看已完成的课时来凑时长。
+        # 若打开时课程已经全部完成，只有 review_when_finished=True
+        # 才会重看已完成的课时来凑时长。
         "min_minutes_per_course": 0,
         "stall_seconds": 150,        # 视频与平台进度都不动多久算卡住
         "review_when_finished": False,  # 课程全部学完后是否再从头复习一遍

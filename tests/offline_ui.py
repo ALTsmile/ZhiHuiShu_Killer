@@ -103,7 +103,7 @@ def main() -> int:
             "版本号写在界面上（1.0.2）",
             "1.0.2" in about.winfo_children()[0].winfo_children()[0].cget("text"),
         )
-        info = updater.UpdateInfo(version="1.0.3", tag="v1.0.3",
+        info = updater.UpdateInfo(version="1.0.5", tag="v1.0.5",
                                   notes="修复了 XXX\n新增了 YYY")
         about.offer_update(info)
         app.update()
@@ -114,7 +114,7 @@ def main() -> int:
         failures += not check(
             "更新按钮亮起且写明目标版本",
             str(about.update_button.cget("state")) == "normal"
-            and "1.0.3" in str(about.update_button.cget("text")),
+            and "1.0.5" in str(about.update_button.cget("text")),
         )
         about._open_repo()
         failures += not check("点「打开项目主页」会回调", opened["repo"] == 1)

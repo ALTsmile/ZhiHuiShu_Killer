@@ -1671,8 +1671,8 @@ def main() -> int:
             and updater.is_newer("1.0.1", "1.0.2") is False,
         )
         failures += not check(
-            "带后缀的版本号也能比（1.0.3-beta > 1.0.2）",
-            updater.is_newer("v1.0.3-beta", "1.0.2") is True,
+            "带后缀的版本号也能比（1.0.4-beta > 1.0.2）",
+            updater.is_newer("v1.0.4-beta", "1.0.2") is True,
         )
 
         with tempfile_mod.TemporaryDirectory() as tmp:

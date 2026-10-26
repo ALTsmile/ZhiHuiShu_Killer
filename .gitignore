@@ -3,6 +3,12 @@ _reference/
 data/
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
 *.spec
 build/
 dist/

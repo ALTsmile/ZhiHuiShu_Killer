@@ -21,8 +21,8 @@ LESSON_CLICK_TIMEOUT = 10_000
 MAX_CHAPTER_TEST_TRIES = 3
 # 同一条测验最多点几次（中间会把随堂练习等遮挡物清掉再点）
 MAX_CHAPTER_CLICK_TRIES = 3
-# 「作业考试」列表通道最多扫几轮（每轮会把列表刷新一次）
-MAX_EXAM_LIST_ROUNDS = 5
+# 「作业考试」列表通道每处理一条就刷新重读一次；这个上限只防异常页面死循环。
+MAX_EXAM_LIST_ROUNDS = 100
 # 「每门课刷够 N 分钟」时最多复习几轮（防止目标设得过大时无限循环）
 MAX_REWATCH_ROUNDS = 6
 
@@ -212,17 +212,24 @@ class Runner:
         target_minutes = float(config.get("playback.min_minutes_per_course", 0) or 0)
         rewatch = False
         if not todo:
+            review_enabled = bool(config.data["playback"]["review_when_finished"])
+            if not review_enabled:
+                if target_minutes > 0:
+                    logger.info(
+                        f"「每门课刷够 {target_minutes:.0f} 分钟」不会在未开启复习时"
+                        "主动重播已完成课程，本次忽略该目标。"
+                    )
+                logger.success("本课程所有视频进度都已完成，跳过。")
+                self.stat_courses_skipped += 1
+                return True
             if target_minutes > 0:
                 logger.info(
-                    f"本课程视频都已完成，但设置了「每门课刷够 {target_minutes:.0f} 分钟」，"
+                    f"本课程视频都已完成，已开启复习并设置「每门课刷够 "
+                    f"{target_minutes:.0f} 分钟」，"
                     "将重看已完成的课时来凑学习时长。"
                 )
                 todo = lessons
                 rewatch = True
-            elif not config.data["playback"]["review_when_finished"]:
-                logger.success("本课程所有视频进度都已完成，跳过。")
-                self.stat_courses_skipped += 1
-                return True
             else:
                 logger.info("本课程已完成，按设置从头复习一遍。")
                 todo = lessons
@@ -418,27 +425,17 @@ class Runner:
         if captcha.has_verification(page):
             captcha.handle_verification(page, config, logger, bridge)
 
-        # 优先走「作业考试」列表：它直接分好未提交/已提交，比逐条点目录快得多。
-        # 拿不到列表（入口没找到 / 页面结构不认识）就回退到下面的目录扫描。
-        if config.data["quiz"]["auto_chapter_quiz"]:
-            fast = self._run_via_exam_list(
-                page, url, config, logger, bridge, auto_submit, review
-            )
-            if fast is not None:
-                return fast
-            logger.info("「作业考试」列表不可用，改用课程目录逐个检查章节测验。")
-
-        selector = catalog_mod.chapter_item_selector(page)
-        if not selector:
-            logger.info(
-                "目录里没有找到章节测验条目（.item-test）。"
-                "如果这门课确实有章节测验，请把课程目录的 HTML 发我以便适配。"
-            )
-            return True
-
-        total_items = page.locator(selector).count()
-        logger.info(f"目录里找到 {total_items} 个章节测验条目。")
+        # 未勾选自动完成时只清点目录，既不能作答，也不能进入作业考试快速通道。
         if not config.data["quiz"]["auto_chapter_quiz"]:
+            selector = catalog_mod.chapter_item_selector(page)
+            if not selector:
+                logger.info(
+                    "目录里没有找到章节测验条目（.item-test）。"
+                    "如果这门课确实有章节测验，请把课程目录的 HTML 发我以便适配。"
+                )
+                return True
+            total_items = page.locator(selector).count()
+            logger.info(f"目录里找到 {total_items} 个章节测验条目。")
             for position in range(total_items):
                 info = catalog_mod.chapter_item_info(page.locator(selector).nth(position))
                 logger.info(
@@ -449,6 +446,7 @@ class Runner:
             logger.info("「自动完成章节测验」未勾选，本轮只做清点，不做任何作答。")
             return True
 
+        # 这两项会传给所有答题入口，必须先初始化再调用快速通道。
         mode = config.quiz_mode("chapter")
         auto_submit = bool(config.get("quiz.auto_submit_chapter", False)) and mode != "manual"
         # 复查：进入"完成率 100% 但未提交"或"做到一半"的测验逐题重选。
@@ -460,6 +458,26 @@ class Runner:
             f"开始处理章节测验（作答方式 {mode}，完成后自动提交："
             f"{'是' if auto_submit else '否'}，复查：{'是' if review else '否'}）。"
         )
+
+        # 优先走「作业考试」列表：它直接分好未提交/已提交，比逐条点目录快得多。
+        # 拿不到列表（入口没找到 / 页面结构不认识）就回退到目录扫描。
+        fast = self._run_via_exam_list(
+            page, url, config, logger, bridge, auto_submit, review
+        )
+        if fast is not None:
+            return fast
+        logger.info("「作业考试」列表不可用，改用课程目录逐个检查章节测验。")
+
+        selector = catalog_mod.chapter_item_selector(page)
+        if not selector:
+            logger.info(
+                "目录里没有找到章节测验条目（.item-test）。"
+                "如果这门课确实有章节测验，请把课程目录的 HTML 发我以便适配。"
+            )
+            return True
+
+        total_items = page.locator(selector).count()
+        logger.info(f"目录里找到 {total_items} 个章节测验条目。")
 
         handled_count = 0
         skipped_count = 0
@@ -542,6 +560,12 @@ class Runner:
             f"（跳过已完成 {skipped_count} 个，打不开 {blocked_count} 个，"
             f"失败 {failed_count} 个，共 {total_items} 个条目）。"
         )
+        if failed_count or blocked_count:
+            logger.warn(
+                "仍有章节测验没有处理成功，不能判定为全部完成；"
+                "下次运行会继续尝试。"
+            )
+            return False
         return True
 
     def _run_one_chapter_test(self, page: Page, url: str, catalog, selector: str,
@@ -775,20 +799,34 @@ class Runner:
             for round_index in range(MAX_EXAM_LIST_ROUNDS):
                 bridge.check_stop()
                 items = examlist.read_pending(list_page, logger)
-                pending = [item for item in items if item["title"] not in seen]
+                pending = [
+                    item
+                    for item in items
+                    if f"{item.get('chapter') or ''}|{item['title']}" not in seen
+                ]
                 if not pending:
-                    logger.info("「作业考试」里已经没有未提交的测试了。")
+                    if items:
+                        logger.info(
+                            f"本轮 {len(items)} 条未提交测试都已尝试，"
+                            f"其中 {failed} 条未成功。"
+                        )
+                    else:
+                        logger.info("「作业考试」里已经没有未提交的测试了。")
                     break
-                for item in pending:
+                # 每次只处理当前列表的第一条。处理完或失败后都会刷新页面，
+                # 新 DOM 的 data-zhs-start 序号会重排，必须丢弃旧快照，否则
+                # 会拿第九章的旧 index 去点刷新后的列表（实际找不到按钮）。
+                for item in pending[:1]:
                     bridge.check_stop()
-                    seen.add(item["title"])
+                    seen.add(f"{item.get('chapter') or ''}|{item['title']}")
                     label = f"{item.get('chapter') or ''}{item['title']}".strip()
                     logger.info(f"打开作业考试：{label}")
                     target = examlist.start_item(list_page, item, logger, bridge)
                     if target is None:
                         logger.warn(f"点了「{item['title']}」之后没有打开答题页，跳过。")
                         failed += 1
-                        continue
+                        examlist.refresh(list_page, logger, bridge)
+                        break
                     if target is not list_page:
                         if self.netlog is not None:
                             self.netlog.attach(target)
@@ -823,6 +861,7 @@ class Runner:
                     else:
                         failed += 1
                     examlist.refresh(list_page, logger, bridge)
+                    break
         finally:
             if list_page is not page:
                 try:
@@ -833,6 +872,12 @@ class Runner:
             f"作业考试列表处理结束：作答 {handled} 个，"
             f"跳过已完成 {skipped} 个，失败 {failed} 个。"
         )
+        if failed:
+            logger.warn(
+                f"还有 {failed} 个未提交测试本次没有处理成功，"
+                "不能判定为全部完成；它们仍会留在「未提交」列表。"
+            )
+            return False
         return True
 
     def _prepare_chapter_item(self, page: Page, catalog, item, logger: Logger) -> bool:
