@@ -20,7 +20,7 @@ import time
 from playwright.sync_api import Page
 
 from . import ai as ai_mod
-from . import popups, site
+from . import captcha, popups, site
 from .ai import AiClient
 from .bridge import Bridge
 from .logger import Logger
@@ -128,7 +128,32 @@ def is_exam_page(page: Page) -> bool:
         return False
 
 
-def wait_ready(page: Page, logger: Logger, bridge: Bridge, timeout: float = 30.0) -> bool:
+def is_submitted_exam(page: Page) -> bool:
+    """这份试卷是不是已经提交 / 批阅过了。
+
+    已提交的试卷页仍然有 `.examPaper_subject`（所以 is_exam_page 会为真），
+    但每题下面会显示「本题的得分」和「AI解析」，而且**没有提交按钮**。
+    以前不认识这种页面，会把已完成的试卷当成"还没答"继续点，结果卡死。
+    """
+    try:
+        return bool(
+            page.evaluate(
+                """() => {
+                    const text = document.body ? (document.body.innerText || '') : '';
+                    const scored = (text.match(/本题的得分/g) || []).length;
+                    const hasSubmit = Boolean(document.querySelector(
+                        "button.btnStyleXSumit, .btnStyleXSumit,"
+                        + " button.btnStyleX, .btnStyleX"));
+                    return !hasSubmit && scored >= 2;
+                }"""
+            )
+        )
+    except Exception:
+        return False
+
+
+def wait_ready(page: Page, logger: Logger, bridge: Bridge, timeout: float = 30.0,
+               config=None) -> bool:
     """等试卷真正渲染出来。
 
     实测：新标签页打开后页面会先显示"正在加载中"，试卷是异步渲染的。
@@ -153,6 +178,15 @@ def wait_ready(page: Page, logger: Logger, bridge: Bridge, timeout: float = 30.0
                 return True
         except Exception:
             pass
+        # 答题页也可能弹人机验证（连续交卷几次后会触发），不处理的话试卷
+        # 永远加载不出来，程序就一直干等。
+        if config is not None:
+            try:
+                if captcha.has_verification(page):
+                    logger.warn("答题页弹出了人机验证，先完成它再继续。")
+                    captcha.handle_verification(page, config, logger, bridge)
+            except Exception:
+                pass
         try:
             if popups.has_error_dialog(page):
                 network_seen = True
@@ -489,7 +523,12 @@ def handle_exam_page(page: Page, config, logger: Logger, bridge: Bridge,
     if not is_exam_page(page):
         return ""
 
-    wait_ready(page, logger, bridge, timeout=30)
+    wait_ready(page, logger, bridge, timeout=30, config=config)
+    if is_submitted_exam(page):
+        logger.info(
+            "这份试卷已经提交 / 批阅过了（每题都有得分、页面没有提交按钮），直接跳过。"
+        )
+        return "skipped"
     card = wait_card_ready(page, logger, bridge, timeout=25)
     rate = card_rate(card)
     items = card.get("items") or []
@@ -518,6 +557,10 @@ def handle_exam_page(page: Page, config, logger: Logger, bridge: Bridge,
 
     for step, pos in enumerate(queue[:MAX_QUESTIONS]):
         bridge.check_stop()
+        # 连续交卷几次后站点会弹人机验证，不处理就没法继续答题
+        if captcha.has_verification(page):
+            logger.warn("答题页弹出了人机验证，先完成它再继续答题。")
+            captcha.handle_verification(page, config, logger, bridge)
         if items:
             # 直接点答题卡上的题号跳过去，不用从第一题一题一题翻
             jump_to_question(page, pos)
@@ -602,6 +645,10 @@ def handle_exam_page(page: Page, config, logger: Logger, bridge: Bridge,
         logger.info("按设置自动提交试卷…")
         if _click_button_by_text(page, site.EXAM_SUBMIT_TEXT, logger):
             bridge.sleep(1.5)
+            # 连续交卷几次后站点会弹人机验证，先处理掉再确认提交
+            if captcha.has_verification(page):
+                logger.warn("提交时弹出了人机验证，先完成它。")
+                captcha.handle_verification(page, config, logger, bridge)
             if popups.click_button_in_dialog(page, site.EXAM_CONFIRM_TEXT, logger,
                                             skip_quiz=False):
                 logger.success("已确认提交试卷。")

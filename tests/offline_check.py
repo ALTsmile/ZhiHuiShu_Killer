@@ -1768,6 +1768,60 @@ def main() -> int:
             and page.evaluate("() => window.__foldExpanded") == 1,
         )
 
+        print("39. 作业考试列表：直接读未提交条目（比逐个点目录快）")
+        from zhskiller import examlist
+
+        page.set_content(
+            '<div id="examStateTab" class="operateNav"><ul>'
+            '<li id="examStateTabWsj" class="cur">未提交</li>'
+            '<li id="examStateTabYsj">已提交</li></ul></div>'
+            '<div id="examBox"><ul><li><div class="examItemWrap">'
+            '<div class="examInfoBox"><div class="examTit"><a class="course_ewname">'
+            '<span class="name">第八章单元测试</span></a></div>'
+            '<ul class="examInfoList"><li>对应章节 <span>第八章</span></li></ul></div>'
+            '<div class="examChartBox1"><a class="jobExamComBtn" title="开始答题">'
+            "<span>开始答题</span></a></div>"
+            "</div></li></ul></div>"
+        )
+        failures += not check(
+            "识别为「作业考试」列表页", examlist.is_list_page(page) is True
+        )
+        pending_exams = examlist.read_pending(page, _Logger())
+        failures += not check(
+            "读到 1 条未提交条目（标题 + 章节）",
+            len(pending_exams) == 1
+            and pending_exams[0]["title"] == "第八章单元测试"
+            and pending_exams[0]["chapter"] == "第八章",
+        )
+
+        print("40. 已提交 / 已批阅的试卷要能认出来（不再当成可答题）")
+        from zhskiller import exam as exam_mod3
+
+        page.set_content(
+            '<div class="examPaper_box">'
+            '<div class="examPaper_subject"><div class="subject_describe">题目一</div>'
+            "<div>本题的得分 2分</div><div>AI解析</div></div>"
+            '<div class="examPaper_subject"><div class="subject_describe">题目二</div>'
+            "<div>本题的得分 0分</div><div>AI解析</div></div>"
+            "</div>"
+        )
+        failures += not check(
+            "没有提交按钮 + 每题都有得分 = 已提交试卷",
+            exam_mod3.is_submitted_exam(page) is True,
+        )
+        page.evaluate(
+            """() => {
+                const button = document.createElement('button');
+                button.className = 'btnStyleXSumit';
+                button.textContent = '提交作业';
+                document.querySelector('.examPaper_box').appendChild(button);
+            }"""
+        )
+        failures += not check(
+            "还能看到「提交作业」按钮时不算已提交",
+            exam_mod3.is_submitted_exam(page) is False,
+        )
+
         browser.close()
     print()
     print("全部通过 ✅" if failures == 0 else f"有 {failures} 项失败 ❌")

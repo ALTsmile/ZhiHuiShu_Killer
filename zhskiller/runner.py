@@ -21,6 +21,8 @@ LESSON_CLICK_TIMEOUT = 10_000
 MAX_CHAPTER_TEST_TRIES = 3
 # 同一条测验最多点几次（中间会把随堂练习等遮挡物清掉再点）
 MAX_CHAPTER_CLICK_TRIES = 3
+# 「作业考试」列表通道最多扫几轮（每轮会把列表刷新一次）
+MAX_EXAM_LIST_ROUNDS = 5
 # 「每门课刷够 N 分钟」时最多复习几轮（防止目标设得过大时无限循环）
 MAX_REWATCH_ROUNDS = 6
 
@@ -416,6 +418,16 @@ class Runner:
         if captcha.has_verification(page):
             captcha.handle_verification(page, config, logger, bridge)
 
+        # 优先走「作业考试」列表：它直接分好未提交/已提交，比逐条点目录快得多。
+        # 拿不到列表（入口没找到 / 页面结构不认识）就回退到下面的目录扫描。
+        if config.data["quiz"]["auto_chapter_quiz"]:
+            fast = self._run_via_exam_list(
+                page, url, config, logger, bridge, auto_submit, review
+            )
+            if fast is not None:
+                return fast
+            logger.info("「作业考试」列表不可用，改用课程目录逐个检查章节测验。")
+
         selector = catalog_mod.chapter_item_selector(page)
         if not selector:
             logger.info(
@@ -613,7 +625,10 @@ class Runner:
 
         # 新标签页刚打开时页面还在"正在加载中"，试卷是异步渲染的。
         # 不先等它渲染出来，就会误判成"没识别到题目结构"并跳过一个正常的测验。
-        exam.wait_ready(target, logger, bridge, timeout=30)
+        exam.wait_ready(target, logger, bridge, timeout=30, config=config)
+        if captcha.has_verification(target):
+            logger.warn("答题页需要先完成人机验证，正在处理…")
+            captcha.handle_verification(target, config, logger, bridge)
 
         # 如果被踢到登录页，说明这个标签页拿不到登录态（站点把凭证放在
         # sessionStorage 里，不跨标签页共享）。继续往下只会不停开登录页，
@@ -632,6 +647,53 @@ class Runner:
                     pass
             return "aborted"
 
+        outcome = self._handle_exam_target(
+            target, config=config, logger=logger, bridge=bridge,
+            auto_submit=auto_submit, review=review,
+        )
+        if outcome == "aborted":
+            if target is not page:
+                try:
+                    target.close()
+                except Exception:
+                    pass
+            return "aborted"
+
+        # 收尾：勾了自动提交 → 关掉答题标签页；
+        #       没勾（只作答交给用户核对）→ 保留标签页，
+        #       否则页面一关用户就没法核对/提交了（答案已经点「保存」存到服务器）。
+        self._leave_exam_tab(
+            target, page, url, logger,
+            keep=(not auto_submit and outcome == "done"),
+        )
+        if outcome in ("done", "skipped"):
+            if captcha.has_verification(page):
+                captcha.handle_verification(page, config, logger, bridge)
+            return outcome
+
+        return "failed"
+
+    def _handle_exam_target(self, target: Page, *, config, logger: Logger,
+                            bridge: Bridge, auto_submit: bool,
+                            review: bool) -> str:
+        """处理一个已经打开的答题页，返回 done / skipped / failed / aborted。
+
+        这里只负责"答题 + 识别状态"，不负责关标签页 —— 目录通道和
+        「作业考试」通道的收尾方式不一样，各自处理。
+        """
+        # 如果被踢到登录页，说明这个标签页拿不到登录态（站点把凭证放在
+        # sessionStorage 里，不跨标签页共享）。继续往下只会不停开登录页。
+        if login.is_login_page(target.url):
+            logger.error(f"打开的章节测验被跳到了登录页：{target.url[:90]}")
+            logger.info(
+                "该标签页拿不到登录态，已停止继续打开章节测验（否则会不停地弹登录页）。"
+            )
+            logger.info(
+                "建议：改用「接管已打开的浏览器」模式（用同一个窗口打开章节测验），"
+                "或者先在浏览器里手动把这一门课的章节测验打开一次确认能正常进入。"
+            )
+            return "aborted"
+
         # 章节测验有两种形态：整页试卷（在线考试页）和弹窗。
         # 先按整页试卷处理，识别不到再退回弹窗逻辑。
         result = exam.handle_exam_page(
@@ -640,7 +702,6 @@ class Runner:
         )
         if result == "skipped":
             logger.info("该测验已完成，跳过（不需要作答）。")
-            self._leave_exam_tab(target, page, url, logger, keep=False)
             return "skipped"
         done = bool(result)
         if not done:
@@ -656,12 +717,8 @@ class Runner:
                 )
                 self._clear_in_video_quiz(target, config, logger, bridge)
         if done:
-            # 收尾：勾了自动提交 → 关掉答题标签页；
-            #       没勾（只作答交给用户核对）→ 保留标签页，
-            #       否则页面一关用户就没法核对/提交了（答案已经点「保存」存到服务器）。
-            self._leave_exam_tab(target, page, url, logger, keep=not auto_submit)
-            if captcha.has_verification(page):
-                captcha.handle_verification(page, config, logger, bridge)
+            if captcha.has_verification(target):
+                captcha.handle_verification(target, config, logger, bridge)
             return "done"
 
         logger.warn(
@@ -672,8 +729,6 @@ class Runner:
 
         diagnostics.report_structure(target, logger, "未识别的测验页")
         diagnostics.dump_page(target, logger, "unknown-exam")
-        # 出问题的那一页直接关掉：留着它既不能作答，也会挡住后面重试的标签页
-        self._leave_exam_tab(target, page, url, logger, keep=False)
         return "failed"
 
     def _clear_in_video_quiz(self, page: Page, config, logger: Logger,
@@ -699,6 +754,85 @@ class Runner:
             )
         except Exception as exc:
             logger.warn(f"处理随堂练习时出错：{exc}")
+        return True
+
+    def _run_via_exam_list(self, page: Page, url: str, config, logger: Logger,
+                           bridge: Bridge, auto_submit: bool,
+                           review: bool) -> bool | None:
+        """「作业考试」列表通道：直接处理未提交的作业 / 测试。
+
+        它比逐个点课程目录快得多：列表里已经分好「未提交 / 已提交」，
+        不用每一条都点开看一眼。拿不到列表就返回 None，让调用方回退。
+        """
+        from . import examlist
+
+        list_page = examlist.open_list(page, logger, bridge)
+        if list_page is None:
+            return None
+        handled = skipped = failed = 0
+        seen: set[str] = set()
+        try:
+            for round_index in range(MAX_EXAM_LIST_ROUNDS):
+                bridge.check_stop()
+                items = examlist.read_pending(list_page, logger)
+                pending = [item for item in items if item["title"] not in seen]
+                if not pending:
+                    logger.info("「作业考试」里已经没有未提交的测试了。")
+                    break
+                for item in pending:
+                    bridge.check_stop()
+                    seen.add(item["title"])
+                    label = f"{item.get('chapter') or ''}{item['title']}".strip()
+                    logger.info(f"打开作业考试：{label}")
+                    target = examlist.start_item(list_page, item, logger, bridge)
+                    if target is None:
+                        logger.warn(f"点了「{item['title']}」之后没有打开答题页，跳过。")
+                        failed += 1
+                        continue
+                    if target is not list_page:
+                        if self.netlog is not None:
+                            self.netlog.attach(target)
+                    outcome = self._handle_exam_target(
+                        target, config=config, logger=logger, bridge=bridge,
+                        auto_submit=auto_submit, review=review,
+                    )
+                    # 收尾：答完的答题页（新标签页）关掉，回到列表刷新；
+                    #       没勾自动提交的保留给用户核对（和目录通道一致）。
+                    if target is not list_page:
+                        if outcome == "done" and not auto_submit:
+                            logger.info(
+                                "已保留这个答题标签页（未自动提交），"
+                                "你核对后点「提交作业」即可。"
+                            )
+                        else:
+                            try:
+                                target.close()
+                            except Exception:
+                                pass
+                    else:
+                        try:
+                            list_page.go_back()
+                        except Exception:
+                            pass
+                    if outcome == "aborted":
+                        return False
+                    if outcome == "done":
+                        handled += 1
+                    elif outcome == "skipped":
+                        skipped += 1
+                    else:
+                        failed += 1
+                    examlist.refresh(list_page, logger, bridge)
+        finally:
+            if list_page is not page:
+                try:
+                    list_page.close()
+                except Exception:
+                    pass
+        logger.info(
+            f"作业考试列表处理结束：作答 {handled} 个，"
+            f"跳过已完成 {skipped} 个，失败 {failed} 个。"
+        )
         return True
 
     def _prepare_chapter_item(self, page: Page, catalog, item, logger: Logger) -> bool:
